@@ -1,4 +1,4 @@
-import { intro, multiline, note, outro, spinner } from "@clack/prompts";
+import { intro, multiline, note, outro, spinner, SpinnerResult } from "@clack/prompts";
 import picocolors from "picocolors";
 import { testStreamingLLM } from "./llm/llm";
 import { readFileTool, writeFileTool } from "./tools/file";
@@ -35,7 +35,7 @@ async function main() {
 	/**
 	 * keeps list of tool calls, if they are completed we set that one to true.
 	 */
-	const toolCallsMap = new Map<string, boolean>();
+	const toolCallsMap = new Map<string, SpinnerResult>();
 	for await (const item of result.getItemsStream()) {
 		switch (item.type) {
 			case "message":
@@ -50,16 +50,20 @@ async function main() {
 				if (
 					item.status === "in_progress" &&
 					!toolCallsMap.has(item.callId || "")
-				) {
-					toolCallsMap.set(item.callId || "", false);
-					s.start(
+        ) {
+          const spin = spinner();
+					toolCallsMap.set(item.callId || "", spin);
+					spin.start(
 						`${item.name} is being called with arguments ${item.arguments}`,
 					);
 					// note(`Tool call: ${item.name} with arguments ${item.arguments}`);
 					break;
 				}
 				if (item.status === "completed") {
-					toolCallsMap.set(item.id || "", true);
+					const spin = toolCallsMap.get(item.callId || "");
+          if (spin) {
+            spin.stop(`${item.name} completed successfully!`);
+          }
 					// note(
 					//   `Tool call completed: ${item.name} with arguments ${item.arguments}`,
 					// );
