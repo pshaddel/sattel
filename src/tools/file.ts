@@ -77,7 +77,16 @@ export const readFileTool = tool({
 // TODO: can we read a file just method names?
 // TODO: How about method map or something like that?
 
-type FilePatch = [number, string, ...string[]];
+type ReplacePatch = ["replace", number, string];
+type InsertAfterPatch = ["insert-after", number, string];
+type DeletePatch = ["delete", number];
+type DeleteSectionPatch = ["delete-section", number, number];
+type FilePatch =
+	| ReplacePatch
+	| InsertAfterPatch
+	| DeletePatch
+	| DeleteSectionPatch;
+
 async function writeFileExecution(path: string, patch: FilePatch[]) {
 	try {
 		const fileContent = await fs.promises.readFile(path, "utf8");
@@ -86,24 +95,63 @@ async function writeFileExecution(path: string, patch: FilePatch[]) {
 		}
 
 		const lines = fileContent.split("\n");
-		for (const [lineNumber, ...newLines] of patch) {
-			if (lineNumber >= 0 && lineNumber < lines.length) {
-				lines[lineNumber] = newLines.join("\n");
+		const lineNumbersToDelete = new Set<number>();
+		const insertionsAfterLine = new Map<number, string[]>();
+
+		for (const entry of patch) {
+			const mode = entry[0];
+			if (mode === "delete-section") {
+				const [, startLineNumber, endLineNumber] = entry;
+				for (
+					let i = Math.max(startLineNumber, 0);
+					i <= endLineNumber && i < lines.length;
+					i++
+				) {
+					lineNumbersToDelete.add(i);
+				}
+				continue;
+			}
+
+			const lineNumber = entry[1];
+			if (lineNumber < 0 || lineNumber >= lines.length) {
+				continue;
+			}
+			if (mode === "replace") {
+				lines[lineNumber] = entry[2];
+			} else if (mode === "delete") {
+				lineNumbersToDelete.add(lineNumber);
+			} else if (mode === "insert-after") {
+				const existing = insertionsAfterLine.get(lineNumber) ?? [];
+				existing.push(...entry[2].split("\n"));
+				insertionsAfterLine.set(lineNumber, existing);
 			}
 		}
 
-		await fs.promises.writeFile(path, lines.join("\n"), "utf8");
+		const finalLines: string[] = [];
+		for (let i = 0; i < lines.length; i++) {
+			if (!lineNumbersToDelete.has(i)) {
+				finalLines.push(lines[i]);
+			}
+			const insertions = insertionsAfterLine.get(i);
+			if (insertions) {
+				finalLines.push(...insertions);
+			}
+		}
+
+		await fs.promises.writeFile(path, finalLines.join("\n"), "utf8");
 	} catch (error) {
 		if (
 			error instanceof Error &&
 			(error as NodeJS.ErrnoException).code === "ENOENT"
 		) {
-			// create the file and write the content to it
-			await fs.promises.writeFile(
-				path,
-				patch.map(([_, content]) => content).join("\n"),
-				"utf8",
-			);
+			// create the file from the "replace" patches only — the other modes
+			// (insert-after/delete/delete-section) don't make sense against a file
+			// that doesn't exist yet, so they're ignored here.
+			const content = patch
+				.filter((entry): entry is ReplacePatch => entry[0] === "replace")
+				.map((entry) => entry[2])
+				.join("\n");
+			await fs.promises.writeFile(path, content, "utf8");
 			return;
 		} else {
 			console.error(`Error writing file at path ${path}:`, error);
@@ -115,26 +163,41 @@ async function writeFileExecution(path: string, patch: FilePatch[]) {
 export const writeFileTool = tool({
 	name: "writeFile",
 	description:
-		"Writes to a file based on specified patches. Each patch is defined by a line number and the new content for that line. if the file is not found, we create a new file and write the content to it. To insert brand-new lines in the middle of the file without shifting any other patch's line numbers, add extra strings after the content: [lineNumber, content, ...moreLines] replaces lineNumber with content and then inserts each of moreLines as new lines immediately after it, in order.",
+		'Writes to a file based on specified patches. Each patch starts with a mode: ["replace", lineNumber, content] replaces a line\'s content; ["insert-after", lineNumber, content] inserts brand-new line(s) right after lineNumber (use "\\n" inside content for more than one); ["delete", lineNumber] removes a single line; ["delete-section", startLineNumber, endLineNumber] removes an inclusive range of lines. If the file does not exist, it is created from the "replace" patches only.',
 	inputSchema: z.object({
 		path: z.string().describe("The path to the file to be written."),
 		patch: z
 			.array(
-				z
-					.tuple([
+				z.union([
+					z.tuple([
+						z.literal("replace"),
 						z.number().describe("The line number to replace."),
-						z.string().describe("The new content for the specified line."),
-					])
-					.rest(
+						z.string().describe("The new content for that line."),
+					]),
+					z.tuple([
+						z.literal("insert-after"),
+						z
+							.number()
+							.describe("Insert the new line(s) right after this line."),
 						z
 							.string()
 							.describe(
-								"An additional new line to insert immediately after the specified line, in order.",
+								'The content to insert. Include "\\n" to insert more than one new line at once.',
 							),
-					),
+					]),
+					z.tuple([
+						z.literal("delete"),
+						z.number().describe("The line number to delete."),
+					]),
+					z.tuple([
+						z.literal("delete-section"),
+						z.number().describe("The first line number to delete (inclusive)."),
+						z.number().describe("The last line number to delete (inclusive)."),
+					]),
+				]),
 			)
 			.describe(
-				"An array of patches to apply to the file. Each patch is [lineNumber, content, ...moreLines]: content replaces the line at lineNumber, and any further strings are inserted as brand-new lines right after it, in order.",
+				'An array of patches to apply to the file. Each patch is one of: ["replace", lineNumber, content], ["insert-after", lineNumber, content], ["delete", lineNumber], or ["delete-section", startLineNumber, endLineNumber].',
 			),
 	}),
 	outputSchema: z
