@@ -77,7 +77,7 @@ export const readFileTool = tool({
 // TODO: can we read a file just method names?
 // TODO: How about method map or something like that?
 
-type FilePatch = [number, string] | ["insert-after", string];
+type FilePatch = [number, string, ...string[]];
 async function writeFileExecution(path: string, patch: FilePatch[]) {
 	try {
 		const fileContent = await fs.promises.readFile(path, "utf8");
@@ -86,18 +86,9 @@ async function writeFileExecution(path: string, patch: FilePatch[]) {
 		}
 
 		const lines = fileContent.split("\n");
-		let anchorLineNumber: number | undefined;
-		for (const [lineNumber, newContent] of patch) {
-			if (lineNumber === "insert-after") {
-				if (anchorLineNumber === undefined) {
-					throw new Error(
-						'An "insert-after" patch must come after a patch with a numeric line number to anchor it to.',
-					);
-				}
-				lines[anchorLineNumber] = `${lines[anchorLineNumber]}\n${newContent}`;
-			} else if (lineNumber >= 0 && lineNumber < lines.length) {
-				lines[lineNumber] = newContent;
-				anchorLineNumber = lineNumber;
+		for (const [lineNumber, ...newLines] of patch) {
+			if (lineNumber >= 0 && lineNumber < lines.length) {
+				lines[lineNumber] = newLines.join("\n");
 			}
 		}
 
@@ -124,28 +115,26 @@ async function writeFileExecution(path: string, patch: FilePatch[]) {
 export const writeFileTool = tool({
 	name: "writeFile",
 	description:
-		'Writes to a file based on specified patches. Each patch is defined by a line number and the new content for that line. if the file is not found, we create a new file and write the content to it. To insert a brand-new line in the middle of the file without shifting any other patch\'s line numbers, use the literal "insert-after" instead of a line number: its content is inserted right after the most recent patch in the array that had a numeric line number (the "anchor"). Chain multiple "insert-after" entries after the same anchor to insert several new lines in order, one after another.',
+		"Writes to a file based on specified patches. Each patch is defined by a line number and the new content for that line. if the file is not found, we create a new file and write the content to it. To insert brand-new lines in the middle of the file without shifting any other patch's line numbers, add extra strings after the content: [lineNumber, content, ...moreLines] replaces lineNumber with content and then inserts each of moreLines as new lines immediately after it, in order.",
 	inputSchema: z.object({
 		path: z.string().describe("The path to the file to be written."),
 		patch: z
 			.array(
-				z.union([
-					z.tuple([
+				z
+					.tuple([
 						z.number().describe("The line number to replace."),
 						z.string().describe("The new content for the specified line."),
-					]),
-					z.tuple([
+					])
+					.rest(
 						z
-							.literal("insert-after")
+							.string()
 							.describe(
-								'Inserts a brand-new line right after the most recent numeric-line patch (the "anchor"), instead of replacing an existing line. Must be preceded by a numeric-line patch in the same array.',
+								"An additional new line to insert immediately after the specified line, in order.",
 							),
-						z.string().describe("The content of the new line to insert."),
-					]),
-				]),
+					),
 			)
 			.describe(
-				'An array of patches to apply to the file. Each patch is either [lineNumber, content] to replace a line, or ["insert-after", content] to insert a new line right after the nearest preceding numeric-line patch.',
+				"An array of patches to apply to the file. Each patch is [lineNumber, content, ...moreLines]: content replaces the line at lineNumber, and any further strings are inserted as brand-new lines right after it, in order.",
 			),
 	}),
 	outputSchema: z

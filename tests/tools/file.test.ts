@@ -158,33 +158,26 @@ describe("writeFileTool", () => {
 		expect(content).toBe("a\nb");
 	});
 
-	test('inserts a new line after its anchor with "insert-after"', async () => {
+	test("inserts a new line after the specified line via a third tuple element", async () => {
 		const filePath = tempPath("insert-single.txt");
 		await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
 
 		await writeFileTool.function.execute({
 			path: filePath,
-			patch: [
-				[1, "b"],
-				["insert-after", "inserted"],
-			],
+			patch: [[1, "b", "inserted"]],
 		});
 
 		const content = await fs.promises.readFile(filePath, "utf8");
 		expect(content).toBe("a\nb\ninserted\nc");
 	});
 
-	test('chains multiple "insert-after" entries after the same anchor in order', async () => {
+	test("inserts multiple new lines in order via multiple extra tuple elements", async () => {
 		const filePath = tempPath("insert-multiple.txt");
 		await fs.promises.writeFile(filePath, "a\nb", "utf8");
 
 		await writeFileTool.function.execute({
 			path: filePath,
-			patch: [
-				[0, "a"],
-				["insert-after", "first"],
-				["insert-after", "second"],
-			],
+			patch: [[0, "a", "first", "second"]],
 		});
 
 		const content = await fs.promises.readFile(filePath, "utf8");
@@ -198,8 +191,7 @@ describe("writeFileTool", () => {
 		await writeFileTool.function.execute({
 			path: filePath,
 			patch: [
-				[0, "a"],
-				["insert-after", "inserted"],
+				[0, "a", "inserted"],
 				[2, "C"],
 			],
 		});
@@ -208,84 +200,63 @@ describe("writeFileTool", () => {
 		expect(content).toBe("a\ninserted\nb\nC");
 	});
 
-	test('throws when "insert-after" has no preceding numeric anchor', async () => {
-		const filePath = tempPath("insert-no-anchor.txt");
-		await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-		await expect(
-			writeFileTool.function.execute({
-				path: filePath,
-				patch: [["insert-after", "orphan"]],
-			}),
-		).rejects.toThrow(
-			'An "insert-after" patch must come after a patch with a numeric line number to anchor it to.',
-		);
-	});
-
-	test('re-anchors "insert-after" to each new numeric patch as it appears', async () => {
-		const filePath = tempPath("insert-reanchor.txt");
-		await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-		await writeFileTool.function.execute({
-			path: filePath,
-			patch: [
-				[0, "a"],
-				["insert-after", "a1"],
-				[1, "b"],
-				["insert-after", "b1"],
-			],
-		});
-
-		const content = await fs.promises.readFile(filePath, "utf8");
-		expect(content).toBe("a\na1\nb\nb1\nc");
-	});
-
-	test('does not treat an out-of-range numeric patch as an anchor for "insert-after"', async () => {
-		const filePath = tempPath("insert-invalid-anchor.txt");
-		await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-		await expect(
-			writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					[10, "ignored"],
-					["insert-after", "orphan"],
-				],
-			}),
-		).rejects.toThrow(
-			'An "insert-after" patch must come after a patch with a numeric line number to anchor it to.',
-		);
-	});
-
-	test('appends "insert-after" content at the end of the file when anchored to the last line', async () => {
+	test("appends new lines at the end of the file when the patch targets the last line", async () => {
 		const filePath = tempPath("insert-at-end.txt");
 		await fs.promises.writeFile(filePath, "a\nb", "utf8");
 
 		await writeFileTool.function.execute({
 			path: filePath,
-			patch: [
-				[1, "b"],
-				["insert-after", "c"],
-			],
+			patch: [[1, "b", "c"]],
 		});
 
 		const content = await fs.promises.readFile(filePath, "utf8");
 		expect(content).toBe("a\nb\nc");
 	});
 
-	test('creates a new file treating "insert-after" entries the same as numbered ones', async () => {
+	test("creates a new file inserting extra lines from a patch with more than two elements", async () => {
 		const filePath = tempPath("insert-new-file.txt");
 
 		await writeFileTool.function.execute({
 			path: filePath,
 			patch: [
-				[0, "a"],
-				["insert-after", "b"],
+				[0, "a", "b"],
 				[1, "c"],
 			],
 		});
 
 		const content = await fs.promises.readFile(filePath, "utf8");
 		expect(content).toBe("a\nb\nc");
+	});
+
+	test("rejects a patch entry whose first element is not a number", () => {
+		const result = writeFileTool.function.inputSchema.safeParse({
+			path: "irrelevant.txt",
+			patch: [["not-a-number", "content"]],
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.success ? undefined : result.error.issues).toContainEqual(
+			expect.objectContaining({
+				code: "invalid_type",
+				expected: "number",
+				path: ["patch", 0, 0],
+			}),
+		);
+	});
+
+	test("rejects a patch entry missing the required content element", () => {
+		const result = writeFileTool.function.inputSchema.safeParse({
+			path: "irrelevant.txt",
+			patch: [[1]],
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.success ? undefined : result.error.issues).toContainEqual(
+			expect.objectContaining({
+				code: "invalid_type",
+				expected: "string",
+				path: ["patch", 0, 1],
+			}),
+		);
 	});
 });

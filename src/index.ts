@@ -59,10 +59,10 @@ async function main() {
 					// note(`Tool call: ${item.name} with arguments ${item.arguments}`);
 					break;
 				}
-				if (item.status === "completed") {
+        if (item.status === "completed") {
 					const spin = toolCallsMap.get(item.callId || "");
           if (spin) {
-            spin.stop(`${item.name} completed successfully!`);
+            spin.stop(`${item.name} args: ${item.arguments} completedç!`);
           }
 					// note(
 					//   `Tool call completed: ${item.name} with arguments ${item.arguments}`,
