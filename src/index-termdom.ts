@@ -4,6 +4,11 @@ import { testStreamingLLM } from "./llm/llm";
 import { extractPath, shortenPath, toolVerb } from "./tools/file.helper";
 import { readFileTool, writeFileTool } from "./tools/file";
 import {
+	type CommandDef,
+	matchingCommands,
+	renderCommandPalette,
+} from "./ui/command-palette";
+import {
 	EXIT_COMMANDS,
 	RESET_COMMANDS,
 	findCommandMatch,
@@ -29,6 +34,31 @@ async function main() {
 	const log = document.createElement("div");
 	log.className = "log";
 	document.body.appendChild(log);
+
+	const commandPalette = document.createElement("div");
+	commandPalette.className = "command-palette";
+	document.body.appendChild(commandPalette);
+
+	let paletteCommands: CommandDef[] = [];
+	let paletteSelectedIndex = 0;
+
+	function renderPalette() {
+		renderCommandPalette(commandPalette, paletteCommands, paletteSelectedIndex);
+	}
+
+	function updatePalette() {
+		paletteCommands = matchingCommands(input.value);
+		if (paletteSelectedIndex >= paletteCommands.length) {
+			paletteSelectedIndex = 0;
+		}
+		renderPalette();
+	}
+
+	function closePalette() {
+		paletteCommands = [];
+		paletteSelectedIndex = 0;
+		renderPalette();
+	}
 
 	const promptRow = document.createElement("div");
 	promptRow.className = "prompt-row";
@@ -88,6 +118,7 @@ async function main() {
 	function syncInput() {
 		input.rows = computeRows(input.value);
 		renderOverlay();
+		updatePalette();
 	}
 	input.addEventListener("input", syncInput);
 	syncInput();
@@ -100,7 +131,7 @@ async function main() {
 
 	const hint = document.createElement("div");
 	hint.className = "hint";
-	hint.textContent = "↵ send   ^J newline   esc exit";
+	hint.textContent = "↵ send   ^J newline   ⇥ complete   esc exit";
 	document.body.appendChild(hint);
 
 	function appendEntry(text: string, className: string) {
@@ -230,8 +261,29 @@ async function main() {
 	input.addEventListener(
 		"keydown",
 		(ev) => {
-			if (ev.key === "Enter") {
+			if (ev.key === "Tab" && paletteCommands.length > 0) {
 				ev.preventDefault();
+				input.value = `${paletteCommands[paletteSelectedIndex].name} `;
+				input.setSelectionRange(input.value.length, input.value.length);
+				syncInput();
+			} else if (ev.key === "ArrowDown" && paletteCommands.length > 0) {
+				ev.preventDefault();
+				paletteSelectedIndex =
+					(paletteSelectedIndex + 1) % paletteCommands.length;
+				renderPalette();
+			} else if (ev.key === "ArrowUp" && paletteCommands.length > 0) {
+				ev.preventDefault();
+				paletteSelectedIndex =
+					(paletteSelectedIndex - 1 + paletteCommands.length) %
+					paletteCommands.length;
+				renderPalette();
+			} else if (ev.key === "Enter") {
+				ev.preventDefault();
+				if (paletteCommands.length > 0) {
+					input.value = paletteCommands[paletteSelectedIndex].name;
+					closePalette();
+				}
+
 				const value = input.value;
 				input.value = "";
 				syncInput();
@@ -255,7 +307,14 @@ async function main() {
 				input.value = `${input.value.slice(0, start)}\n${input.value.slice(end)}`;
 				input.setSelectionRange(start + 1, start + 1);
 				syncInput();
-			} else if (ev.key === "Escape" || (ev.key === "c" && ev.ctrlKey)) {
+			} else if (ev.key === "Escape") {
+				if (paletteCommands.length > 0) {
+					ev.preventDefault();
+					closePalette();
+				} else {
+					endSession();
+				}
+			} else if (ev.key === "c" && ev.ctrlKey) {
 				endSession();
 			}
 		},
