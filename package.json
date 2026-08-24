@@ -2,7 +2,8 @@
 	"scripts": {
 		"format": "biome check --write .",
 		"check": "biome check .",
-		"test": "bun test"
+		"test": "bun test",
+		"test:integration": "RUN_INTEGRATION_TESTS=1 bun test tests/tools/file.integration.test.ts"
 	},
 	"dependencies": {
 		"@clack/prompts": "^1.7.0",
