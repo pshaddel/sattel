@@ -1,8 +1,16 @@
 import { TermDOM } from "@b9g/termdom";
+import type { ConversationState, StateAccessor } from "@openrouter/agent";
 import { testStreamingLLM } from "./llm/llm";
 import { readFileTool, writeFileTool } from "./tools/file";
 
 const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
+
+const EXIT_COMMANDS = ["/exit", "/quit"];
+const RESET_COMMANDS = ["/new", "/init", "/reset"];
+
+function matchesAny(value: string, commands: string[]): boolean {
+	return commands.some((command) => value.includes(command));
+}
 
 function toolVerb(name: string): string {
 	switch (name) {
@@ -83,6 +91,8 @@ const STYLES = `
     color: #e0e0e0;
     border: none;
   }
+  textarea.command-exit { color: #ff5f5f; font-weight: bold; }
+  textarea.command-reset { color: #5fff87; font-weight: bold; }
   .hint {
     color: #555555;
     padding: 0 1ch;
@@ -131,8 +141,20 @@ async function main() {
 		const lines = input.value.split("\n").length;
 		input.rows = Math.min(MAX_INPUT_ROWS, Math.max(1, lines));
 	}
-	input.addEventListener("input", syncInputRows);
-	syncInputRows();
+	function syncCommandHighlight() {
+		const value = input.value;
+		input.classList.toggle("command-exit", matchesAny(value, EXIT_COMMANDS));
+		input.classList.toggle(
+			"command-reset",
+			matchesAny(value, RESET_COMMANDS),
+		);
+	}
+	function syncInput() {
+		syncInputRows();
+		syncCommandHighlight();
+	}
+	input.addEventListener("input", syncInput);
+	syncInput();
 
 	function appendEntry(text: string, className: string) {
 		const entry = document.createElement("div");
@@ -147,10 +169,30 @@ async function main() {
 		term.dispose().then(() => process.exit(0));
 	}
 
+	let conversationState: ConversationState | null = null;
+	const sessionState: StateAccessor = {
+		load: async () => conversationState,
+		save: async (state) => {
+			conversationState = state;
+		},
+	};
+
+	function startNewSession() {
+		conversationState = null;
+		while (log.firstChild) {
+			log.removeChild(log.firstChild);
+		}
+		appendEntry("✔ Started a new session.", "outro");
+	}
+
 	async function handlePrompt(userPrompt: string) {
 		appendEntry(userPrompt, "you");
 
-		const result = testStreamingLLM(userPrompt, [readFileTool, writeFileTool]);
+		const result = testStreamingLLM(
+			userPrompt,
+			[readFileTool, writeFileTool],
+			sessionState,
+		);
 
 		const toolCallsMap = new Map<
 			string,
@@ -249,13 +291,17 @@ async function main() {
 				ev.preventDefault();
 				const value = input.value;
 				input.value = "";
-				syncInputRows();
+				syncInput();
 
 				if (!value.trim()) {
 					return;
 				}
-				if (value.includes("/exit") || value.includes("/quit")) {
+				if (matchesAny(value, EXIT_COMMANDS)) {
 					endSession();
+					return;
+				}
+				if (matchesAny(value, RESET_COMMANDS)) {
+					startNewSession();
 					return;
 				}
 				handlePrompt(value);
@@ -265,7 +311,7 @@ async function main() {
 				const end = input.selectionEnd ?? input.value.length;
 				input.value = `${input.value.slice(0, start)}\n${input.value.slice(end)}`;
 				input.setSelectionRange(start + 1, start + 1);
-				syncInputRows();
+				syncInput();
 			} else if (ev.key === "Escape" || (ev.key === "c" && ev.ctrlKey)) {
 				endSession();
 			}

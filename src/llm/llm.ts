@@ -1,8 +1,25 @@
-import { OpenRouter, type Tool } from "@openrouter/agent";
+import { OpenRouter, type StateAccessor, type Tool } from "@openrouter/agent";
+import { modelsGet } from "@openrouter/sdk/funcs/modelsGet";
 
-const openrouter = new OpenRouter({
+export const openrouter = new OpenRouter({
 	apiKey: process.env.OPENROUTER_API_KEY,
 });
+
+export async function getModelContextLength(
+	model: string,
+): Promise<number | null> {
+	const [author, slug] = model.split(/\/(.*)/s);
+	if (!author || !slug) {
+		return null;
+	}
+
+	const result = await modelsGet(openrouter, { author, slug });
+	if (!result.ok) {
+		return null;
+	}
+
+	return result.value.data.contextLength;
+}
 
 export async function testLLMAccess(): Promise<void> {
 	if (!process.env.OPENROUTER_API_KEY) {
@@ -24,7 +41,11 @@ export async function testLLMAccess(): Promise<void> {
 	}
 }
 
-export function testStreamingLLM(userPrompt?: string, tools: Tool[] = []) {
+export function testStreamingLLM(
+	userPrompt?: string,
+	tools: Tool[] = [],
+	state?: StateAccessor,
+) {
 	return openrouter.callModel({
 		model: "openai/gpt-5-nano",
 		// model: "google/gemini-3.7-flash",
@@ -32,5 +53,6 @@ export function testStreamingLLM(userPrompt?: string, tools: Tool[] = []) {
 		input:
 			userPrompt ||
 			"write a short sample javascript code snippet, which is a Express App Server",
+		state,
 	});
 }

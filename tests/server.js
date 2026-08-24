@@ -1,15 +1,6 @@
 const express = require("express");
 const app = express();
-const port = 4002;
-
-function logHeaders(headers) {
-	console.log("Headers:", headers);
-}
-
-function logger(req, res, next) {
-	logHeaders(req.headers);
-	next();
-}
+const port = 4002;\n\nfunction logHeaders(req) {\n\tconsole.log("Headers:", req.headers);\n\treturn req.headers;\n}\n\nfunction logger(req, res, next) {\n\tconsole.log(`${req.method} ${req.url}`);\n\tlogHeaders(req);\n\tnext();\n}\n\n
 
 app.use(logger);
 
