@@ -1,103 +1,16 @@
 import { TermDOM } from "@b9g/termdom";
 import type { ConversationState, StateAccessor } from "@openrouter/agent";
 import { testStreamingLLM } from "./llm/llm";
+import { extractPath, shortenPath, toolVerb } from "./tools/file.helper";
 import { readFileTool, writeFileTool } from "./tools/file";
-
-const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
-
-const EXIT_COMMANDS = ["/exit", "/quit"];
-const RESET_COMMANDS = ["/new", "/init", "/reset"];
-
-function matchesAny(value: string, commands: string[]): boolean {
-	return commands.some((command) => value.includes(command));
-}
-
-function toolVerb(name: string): string {
-	switch (name) {
-		case "readFile":
-			return "Read";
-		case "writeFile":
-			return "Write";
-		default:
-			return name;
-	}
-}
-
-function extractPath(argumentsJson: string): string | null {
-	try {
-		const parsed = JSON.parse(argumentsJson);
-		return typeof parsed?.path === "string" ? parsed.path : null;
-	} catch {
-		return null;
-	}
-}
-
-function shortenPath(path: string, keepSegments = 2): string {
-	const parts = path.split("/").filter(Boolean);
-	if (parts.length <= keepSegments) return path;
-	return `.../${parts.slice(-keepSegments).join("/")}`;
-}
-
-const STYLES = `
-  html, body { background-color: #0c0c0c; color: #e0e0e0; }
-  body {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-  }
-  .banner {
-    background-color: cyan;
-    color: black;
-    font-weight: bold;
-    padding: 0 1ch;
-  }
-  .log {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    flex-grow: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 1ch;
-  }
-  .entry { margin-bottom: 1; white-space: pre-wrap; }
-  .entry.you { color: #5fafff; }
-  .entry.message { color: #e0e0e0; }
-  .entry.thinking { color: #666666; font-style: italic; }
-  .entry.tool-box {
-    align-self: flex-start;
-    white-space: nowrap;
-    border-left: 2px solid #3a3a3a;
-    padding-left: 1ch;
-    margin-bottom: 0;
-    color: #9a9a9a;
-  }
-  .entry.tool-box.done {
-    border-left-color: #4a4a4a;
-    color: #d0d0d0;
-  }
-  .entry.outro { color: green; font-weight: bold; }
-  .prompt-row {
-    display: flex;
-    align-items: center;
-    border-top: 1px solid #444444;
-    padding: 0 1ch;
-  }
-  .sigil { color: cyan; font-weight: bold; padding: 0 1ch 0 0; }
-  textarea {
-    flex-grow: 1;
-    background-color: #0c0c0c;
-    color: #e0e0e0;
-    border: none;
-  }
-  textarea.command-exit { color: #ff5f5f; font-weight: bold; }
-  textarea.command-reset { color: #5fff87; font-weight: bold; }
-  .hint {
-    color: #555555;
-    padding: 0 1ch;
-  }
-`;
+import {
+	EXIT_COMMANDS,
+	RESET_COMMANDS,
+	findCommandMatch,
+	matchesAny,
+} from "./ui/command-highlighter";
+import { startSpinner } from "./ui/spinner";
+import { STYLES } from "./ui/styles";
 
 async function main() {
 	const term = new TermDOM();
@@ -122,39 +35,73 @@ async function main() {
 	const sigil = document.createElement("span");
 	sigil.className = "sigil";
 	sigil.textContent = "›";
+
+	const inputWrap = document.createElement("div");
+	inputWrap.className = "input-wrap";
+
 	const input = document.createElement("textarea");
-	input.rows = 1;
 	input.placeholder = "e.g., refactor auth.ts to use JWT tokens";
 	input.value =
 		"add a logger method to my server to log headers\n/Users/poorshad/Desktop/projects/sattel/tests/server.js";
+
+	// TermDOM's <textarea> only picks up its own text color at creation
+	// time — toggling a class or color afterwards updates the box but not
+	// the already-painted value text. So the real textarea's typed text is
+	// always kept invisible (matching the background), and a plain `div`
+	// overlay mirrors it on top with per-substring coloring, since regular
+	// elements DO update their styling live.
+	const overlay = document.createElement("div");
+	overlay.className = "input-overlay";
+
+	const MAX_INPUT_ROWS = 8;
+
+	function computeRows(value: string): number {
+		const lines = value.split("\n").length;
+		return Math.min(MAX_INPUT_ROWS, Math.max(1, lines));
+	}
+
+	function renderOverlay() {
+		while (overlay.firstChild) {
+			overlay.removeChild(overlay.firstChild);
+		}
+		const value = input.value;
+		const match = findCommandMatch(value);
+		if (!match) {
+			overlay.appendChild(document.createTextNode(value));
+			return;
+		}
+		const before = value.slice(0, match.start);
+		const command = value.slice(match.start, match.end);
+		const after = value.slice(match.end);
+		if (before) {
+			overlay.appendChild(document.createTextNode(before));
+		}
+		const commandSpan = document.createElement("span");
+		commandSpan.className = "command";
+		commandSpan.textContent = command;
+		overlay.appendChild(commandSpan);
+		if (after) {
+			overlay.appendChild(document.createTextNode(after));
+		}
+	}
+
+	function syncInput() {
+		input.rows = computeRows(input.value);
+		renderOverlay();
+	}
+	input.addEventListener("input", syncInput);
+	syncInput();
+
+	inputWrap.appendChild(input);
+	inputWrap.appendChild(overlay);
 	promptRow.appendChild(sigil);
-	promptRow.appendChild(input);
+	promptRow.appendChild(inputWrap);
 	document.body.appendChild(promptRow);
 
 	const hint = document.createElement("div");
 	hint.className = "hint";
 	hint.textContent = "↵ send   ^J newline   esc exit";
 	document.body.appendChild(hint);
-
-	const MAX_INPUT_ROWS = 8;
-	function syncInputRows() {
-		const lines = input.value.split("\n").length;
-		input.rows = Math.min(MAX_INPUT_ROWS, Math.max(1, lines));
-	}
-	function syncCommandHighlight() {
-		const value = input.value;
-		input.classList.toggle("command-exit", matchesAny(value, EXIT_COMMANDS));
-		input.classList.toggle(
-			"command-reset",
-			matchesAny(value, RESET_COMMANDS),
-		);
-	}
-	function syncInput() {
-		syncInputRows();
-		syncCommandHighlight();
-	}
-	input.addEventListener("input", syncInput);
-	syncInput();
 
 	function appendEntry(text: string, className: string) {
 		const entry = document.createElement("div");
@@ -196,28 +143,26 @@ async function main() {
 
 		const toolCallsMap = new Map<
 			string,
-			{ el: HTMLElement; timer: ReturnType<typeof setInterval>; verb: string }
+			{ el: HTMLElement; stop: () => void; verb: string }
 		>();
 
 		let thinkingEl: HTMLElement | null = null;
-		let thinkingTimer: ReturnType<typeof setInterval> | null = null;
+		let stopThinkingSpinner: (() => void) | null = null;
 
 		function showThinking() {
 			if (thinkingEl) return;
 			thinkingEl = appendEntry("", "thinking");
-			let frame = 0;
-			thinkingTimer = setInterval(() => {
-				frame = (frame + 1) % SPINNER_FRAMES.length;
+			stopThinkingSpinner = startSpinner((frame) => {
 				if (thinkingEl) {
-					thinkingEl.textContent = `${SPINNER_FRAMES[frame]} Thinking…`;
+					thinkingEl.textContent = `${frame} Thinking…`;
 				}
-			}, 80);
+			});
 		}
 
 		function hideThinking() {
-			if (thinkingTimer) {
-				clearInterval(thinkingTimer);
-				thinkingTimer = null;
+			if (stopThinkingSpinner) {
+				stopThinkingSpinner();
+				stopThinkingSpinner = null;
 			}
 			if (thinkingEl) {
 				thinkingEl.remove();
@@ -250,18 +195,16 @@ async function main() {
 						hideThinking();
 						const verb = toolVerb(item.name);
 						const el = appendEntry("", "tool-box");
-						let frame = 0;
-						const timer = setInterval(() => {
-							frame = (frame + 1) % SPINNER_FRAMES.length;
-							el.textContent = `${SPINNER_FRAMES[frame]} ${verb}`;
-						}, 80);
-						toolCallsMap.set(callId, { el, timer, verb });
+						const stop = startSpinner((frame) => {
+							el.textContent = `${frame} ${verb}`;
+						});
+						toolCallsMap.set(callId, { el, stop, verb });
 						break;
 					}
 					if (item.status === "completed") {
 						const call = toolCallsMap.get(callId);
 						if (call) {
-							clearInterval(call.timer);
+							call.stop();
 							const path = extractPath(item.arguments);
 							const target = path ? shortenPath(path) : item.arguments;
 							call.el.className = "entry tool-box done";
