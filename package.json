@@ -6,6 +6,7 @@
 		"test:integration": "RUN_INTEGRATION_TESTS=1 bun test tests/tools/file.integration.test.ts"
 	},
 	"dependencies": {
+		"@b9g/termdom": "^0.1.5",
 		"@clack/prompts": "^1.7.0",
 		"@openrouter/agent": "^0.11.0",
 		"@types/bun": "^1.4.0",

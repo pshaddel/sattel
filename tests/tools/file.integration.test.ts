@@ -93,10 +93,11 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 			}
 			const text = await result.getText();
 			const toolCalls = [...callsById.values()];
+			const callSummary = toolCalls.length
+				? toolCalls.map((c) => `${c.name}(${c.arguments})`).join(", ")
+				: "(none)";
 			console.log(
-				`  [${model} / ${scenario}] tools called: ${
-					toolCalls.length ? toolCalls.map((c) => c.name).join(", ") : "(none)"
-				} | final text: ${JSON.stringify(text.slice(0, 200))}`,
+				`  [${model} / ${scenario}] tools called: ${callSummary} | final text: ${JSON.stringify(text.slice(0, 200))}`,
 			);
 			return { toolCalls, text };
 		} finally {
@@ -113,6 +114,23 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 		} catch {
 			return {};
 		}
+	}
+
+	/** All `patch` arrays sent to `writeFile`, one per call, in call order. */
+	function writeFilePatches(
+		toolCalls: { name: string; arguments: string }[],
+	): unknown[][] {
+		return toolCalls
+			.filter((call) => call.name === "writeFile")
+			.map((call) => parsedArguments(call).patch)
+			.filter((patch): patch is unknown[] => Array.isArray(patch));
+	}
+
+	/** Whether any patch entry across all writeFile calls uses the given mode. */
+	function anyPatchUsesMode(patches: unknown[][], mode: string): boolean {
+		return patches.some((patch) =>
+			patch.some((entry) => Array.isArray(entry) && entry[0] === mode),
+		);
 	}
 
 	for (const model of models) {
@@ -273,6 +291,80 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 				expect(content).toContain("return a + b;");
 				expect(content).toContain("export function subtract");
 				expect(content).toContain("return a - b;");
+			});
+
+			test("batches two unrelated edits into one call, including a single-line delete", async () => {
+				const filePath = tempPath(`${slugify(model)}-multi-delete.ts`);
+				await fs.promises.writeFile(
+					filePath,
+					[
+						"export const RETRY_LIMIT = 3;",
+						'console.log("temp debug line");',
+						'export const API_VERSION = "v1";',
+						"",
+					].join("\n"),
+					"utf8",
+				);
+
+				const { toolCalls } = await runPrompt(
+					model,
+					"multi-patch-single-delete",
+					`Use your available tools to open the file at "${filePath}" and make two changes: update the retry limit to 5, and remove the stray debug console.log line. Leave everything else unchanged. Make both changes in a single edit. Reply with "done" when finished.`,
+				);
+
+				expect(toolCalls.some((call) => call.name === "writeFile")).toBe(true);
+				const patches = writeFilePatches(toolCalls);
+				expect(patches.some((patch) => patch.length >= 2)).toBe(true);
+				expect(anyPatchUsesMode(patches, "delete")).toBe(true);
+
+				const content = await fs.promises.readFile(filePath, "utf8");
+				expect(content).toContain("RETRY_LIMIT = 5");
+				expect(content).not.toContain("RETRY_LIMIT = 3");
+				expect(content).not.toContain("temp debug line");
+				expect(content).toContain('API_VERSION = "v1"');
+			});
+
+			test("batches two unrelated edits into one call, including a multi-line delete", async () => {
+				const filePath = tempPath(`${slugify(model)}-multi-delete-section.ts`);
+				await fs.promises.writeFile(
+					filePath,
+					[
+						"export const FEATURE_FLAG = false;",
+						"",
+						"// deprecated, do not use",
+						"export function oldHelper(x: number): number {",
+						"\tlet total = 0;",
+						"\tfor (let i = 0; i < x; i++) {",
+						"\t\ttotal += i;",
+						"\t}",
+						"\treturn total;",
+						"}",
+						"",
+						"export function isEnabled(): boolean {",
+						"\treturn FEATURE_FLAG;",
+						"}",
+						"",
+					].join("\n"),
+					"utf8",
+				);
+
+				const { toolCalls } = await runPrompt(
+					model,
+					"multi-patch-multi-delete",
+					`Use your available tools to open the file at "${filePath}" and make two changes: enable the feature flag (set it to true), and delete the entire deprecated "oldHelper" function including its comment. Leave everything else unchanged. Make both changes in a single edit. Reply with "done" when finished.`,
+				);
+
+				expect(toolCalls.some((call) => call.name === "writeFile")).toBe(true);
+				const patches = writeFilePatches(toolCalls);
+				expect(patches.some((patch) => patch.length >= 2)).toBe(true);
+				expect(anyPatchUsesMode(patches, "delete-section")).toBe(true);
+
+				const content = await fs.promises.readFile(filePath, "utf8");
+				expect(content).toContain("FEATURE_FLAG = true");
+				expect(content).not.toContain("FEATURE_FLAG = false");
+				expect(content).not.toContain("oldHelper");
+				expect(content).toContain("export function isEnabled");
+				expect(content).toContain("return FEATURE_FLAG;");
 			});
 		});
 	}
