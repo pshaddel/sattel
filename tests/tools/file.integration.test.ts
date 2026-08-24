@@ -116,20 +116,26 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 		}
 	}
 
-	/** All `patch` arrays sent to `writeFile`, one per call, in call order. */
-	function writeFilePatches(
+	type ParsedEdit = {
+		old_string?: unknown;
+		new_string?: unknown;
+		replace_all?: unknown;
+	};
+
+	/** All `edits` arrays sent to `writeFile`, one per call, in call order. */
+	function writeFileEdits(
 		toolCalls: { name: string; arguments: string }[],
-	): unknown[][] {
+	): ParsedEdit[][] {
 		return toolCalls
 			.filter((call) => call.name === "writeFile")
-			.map((call) => parsedArguments(call).patch)
-			.filter((patch): patch is unknown[] => Array.isArray(patch));
+			.map((call) => parsedArguments(call).edits)
+			.filter((edits): edits is ParsedEdit[] => Array.isArray(edits));
 	}
 
-	/** Whether any patch entry across all writeFile calls uses the given mode. */
-	function anyPatchUsesMode(patches: unknown[][], mode: string): boolean {
-		return patches.some((patch) =>
-			patch.some((entry) => Array.isArray(entry) && entry[0] === mode),
+	/** Whether any edit across all writeFile calls deletes content (new_string: ""). */
+	function anyEditDeletes(editLists: ParsedEdit[][]): boolean {
+		return editLists.some((edits) =>
+			edits.some((edit) => edit.new_string === ""),
 		);
 	}
 
@@ -313,9 +319,9 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 				);
 
 				expect(toolCalls.some((call) => call.name === "writeFile")).toBe(true);
-				const patches = writeFilePatches(toolCalls);
-				expect(patches.some((patch) => patch.length >= 2)).toBe(true);
-				expect(anyPatchUsesMode(patches, "delete")).toBe(true);
+				const editLists = writeFileEdits(toolCalls);
+				expect(editLists.some((edits) => edits.length >= 2)).toBe(true);
+				expect(anyEditDeletes(editLists)).toBe(true);
 
 				const content = await fs.promises.readFile(filePath, "utf8");
 				expect(content).toContain("RETRY_LIMIT = 5");
@@ -355,9 +361,9 @@ describe.skipIf(!canRun)("live OpenRouter tool-calling", () => {
 				);
 
 				expect(toolCalls.some((call) => call.name === "writeFile")).toBe(true);
-				const patches = writeFilePatches(toolCalls);
-				expect(patches.some((patch) => patch.length >= 2)).toBe(true);
-				expect(anyPatchUsesMode(patches, "delete-section")).toBe(true);
+				const editLists = writeFileEdits(toolCalls);
+				expect(editLists.some((edits) => edits.length >= 2)).toBe(true);
+				expect(anyEditDeletes(editLists)).toBe(true);
 
 				const content = await fs.promises.readFile(filePath, "utf8");
 				expect(content).toContain("FEATURE_FLAG = true");

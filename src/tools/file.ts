@@ -77,80 +77,66 @@ export const readFileTool = tool({
 // TODO: can we read a file just method names?
 // TODO: How about method map or something like that?
 
-type ReplacePatch = ["replace", number, string];
-type InsertAfterPatch = ["insert-after", number, string];
-type DeletePatch = ["delete", number];
-type DeleteSectionPatch = ["delete-section", number, number];
-type FilePatch =
-	| ReplacePatch
-	| InsertAfterPatch
-	| DeletePatch
-	| DeleteSectionPatch;
+type FileEdit = {
+	old_string: string;
+	new_string: string;
+	replace_all?: boolean;
+};
 
-async function writeFileExecution(path: string, patch: FilePatch[]) {
+async function writeFileExecution(path: string, edits: FileEdit[]) {
 	try {
-		const fileContent = await fs.promises.readFile(path, "utf8");
-		if (!fileContent) {
-			throw new Error(`File at path ${path} is empty or could not be read.`);
-		}
+		let content = await fs.promises.readFile(path, "utf8");
 
-		const lines = fileContent.split("\n");
-		const lineNumbersToDelete = new Set<number>();
-		const insertionsAfterLine = new Map<number, string[]>();
+		for (const { old_string, new_string, replace_all } of edits) {
+			if (old_string === "") {
+				content += new_string;
+				continue;
+			}
 
-		for (const entry of patch) {
-			const mode = entry[0];
-			if (mode === "delete-section") {
-				const [, startLineNumber, endLineNumber] = entry;
-				for (
-					let i = Math.max(startLineNumber, 0);
-					i <= endLineNumber && i < lines.length;
-					i++
-				) {
-					lineNumbersToDelete.add(i);
+			if (replace_all) {
+				if (!content.includes(old_string)) {
+					throw new Error(
+						`old_string not found in ${path}: ${JSON.stringify(old_string)}`,
+					);
 				}
+				content = content.split(old_string).join(new_string);
 				continue;
 			}
 
-			const lineNumber = entry[1];
-			if (lineNumber < 0 || lineNumber >= lines.length) {
-				continue;
+			const firstIndex = content.indexOf(old_string);
+			if (firstIndex === -1) {
+				throw new Error(
+					`old_string not found in ${path}: ${JSON.stringify(old_string)}`,
+				);
 			}
-			if (mode === "replace") {
-				lines[lineNumber] = entry[2];
-			} else if (mode === "delete") {
-				lineNumbersToDelete.add(lineNumber);
-			} else if (mode === "insert-after") {
-				const existing = insertionsAfterLine.get(lineNumber) ?? [];
-				existing.push(...entry[2].split("\n"));
-				insertionsAfterLine.set(lineNumber, existing);
+			const secondIndex = content.indexOf(
+				old_string,
+				firstIndex + old_string.length,
+			);
+			if (secondIndex !== -1) {
+				throw new Error(
+					`old_string matches more than once in ${path}: ${JSON.stringify(old_string)}. Include more surrounding context to make it unique, or pass replace_all: true.`,
+				);
 			}
+			content =
+				content.slice(0, firstIndex) +
+				new_string +
+				content.slice(firstIndex + old_string.length);
 		}
 
-		const finalLines: string[] = [];
-		for (let i = 0; i < lines.length; i++) {
-			if (!lineNumbersToDelete.has(i)) {
-				finalLines.push(lines[i]);
-			}
-			const insertions = insertionsAfterLine.get(i);
-			if (insertions) {
-				finalLines.push(...insertions);
-			}
-		}
-
-		await fs.promises.writeFile(path, finalLines.join("\n"), "utf8");
+		await fs.promises.writeFile(path, content, "utf8");
 	} catch (error) {
 		if (
 			error instanceof Error &&
 			(error as NodeJS.ErrnoException).code === "ENOENT"
 		) {
-			// create the file from the "replace" patches only — the other modes
-			// (insert-after/delete/delete-section) don't make sense against a file
-			// that doesn't exist yet, so they're ignored here.
-			const content = patch
-				.filter((entry): entry is ReplacePatch => entry[0] === "replace")
-				.map((entry) => entry[2])
-				.join("\n");
+			// create the file from the append-style edits only (old_string === "") —
+			// the other edits have no existing content to match against yet, so
+			// they're ignored here.
+			const content = edits
+				.filter((edit) => edit.old_string === "")
+				.map((edit) => edit.new_string)
+				.join("");
 			await fs.promises.writeFile(path, content, "utf8");
 			return;
 		} else {
@@ -163,48 +149,39 @@ async function writeFileExecution(path: string, patch: FilePatch[]) {
 export const writeFileTool = tool({
 	name: "writeFile",
 	description:
-		'Writes to a file based on specified patches. Each patch starts with a mode: ["replace", lineNumber, content] replaces a line\'s content; ["insert-after", lineNumber, content] inserts brand-new line(s) right after lineNumber (use "\\n" inside content for more than one); ["delete", lineNumber] removes a single line; ["delete-section", startLineNumber, endLineNumber] removes an inclusive range of lines. If the file does not exist, it is created from the "replace" patches only.',
+		'Writes to a file by finding an exact snippet of its current content and replacing it with new content — the same convention as a standard str_replace / Edit-style code-editing tool. Each edit is {old_string, new_string}: old_string must match the file\'s current content exactly (including whitespace/indentation) and must be unique unless replace_all is set — include enough surrounding lines to make it unique otherwise. Use new_string: "" to delete old_string entirely (works for a single line or a whole multi-line block). Use old_string: "" to append new_string to the end of the file; if the file does not exist, it is created from the edits whose old_string is "" (concatenated in order). Multiple edits in one call are applied in order against the file\'s progressively-updated content.',
 	inputSchema: z.object({
 		path: z.string().describe("The path to the file to be written."),
-		patch: z
+		edits: z
 			.array(
-				z.union([
-					z.tuple([
-						z.literal("replace"),
-						z.number().describe("The line number to replace."),
-						z.string().describe("The new content for that line."),
-					]),
-					z.tuple([
-						z.literal("insert-after"),
-						z
-							.number()
-							.describe("Insert the new line(s) right after this line."),
-						z
-							.string()
-							.describe(
-								'The content to insert. Include "\\n" to insert more than one new line at once.',
-							),
-					]),
-					z.tuple([
-						z.literal("delete"),
-						z.number().describe("The line number to delete."),
-					]),
-					z.tuple([
-						z.literal("delete-section"),
-						z.number().describe("The first line number to delete (inclusive)."),
-						z.number().describe("The last line number to delete (inclusive)."),
-					]),
-				]),
+				z.object({
+					old_string: z
+						.string()
+						.describe(
+							'The exact text to find in the file, including whitespace/indentation. Must be unique in the file unless replace_all is set. Use "" to append new_string to the end of the file (or to create the file, if it does not exist yet).',
+						),
+					new_string: z
+						.string()
+						.describe(
+							'The text to replace old_string with. Use "" to delete old_string entirely.',
+						),
+					replace_all: z
+						.boolean()
+						.optional()
+						.describe(
+							"Replace every occurrence of old_string instead of requiring exactly one match. Defaults to false.",
+						),
+				}),
 			)
 			.describe(
-				'An array of patches to apply to the file. Each patch is one of: ["replace", lineNumber, content], ["insert-after", lineNumber, content], ["delete", lineNumber], or ["delete-section", startLineNumber, endLineNumber].',
+				"An ordered list of find-and-replace edits to apply to the file. Each edit is matched against the file's content as updated by any earlier edits in this same list.",
 			),
 	}),
 	outputSchema: z
 		.string()
 		.describe("A message indicating the result of the write operation."),
-	execute: async ({ path, patch }) => {
-		await writeFileExecution(path, patch);
+	execute: async ({ path, edits }) => {
+		await writeFileExecution(path, edits);
 		return `File at path ${path} has been updated successfully.`;
 	},
 });

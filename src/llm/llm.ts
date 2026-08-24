@@ -27,6 +27,7 @@ export async function testLLMAccess(): Promise<void> {
 export function testStreamingLLM(userPrompt?: string, tools: Tool[] = []) {
 	return openrouter.callModel({
 		model: "openai/gpt-5-nano",
+		// model: "google/gemini-3.7-flash",
 		tools: tools,
 		input:
 			userPrompt ||

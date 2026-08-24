@@ -24,17 +24,7 @@ async function main() {
 
 	const result = testStreamingLLM(userPrompt, [readFileTool, writeFileTool]);
 
-	// 	// 4. Output structured markdown-like summary
-	// note(
-	// 	`1. Located auth.ts\n2. Replaced session storage with JWT signing\n3. Updated middleware.ts`,
-	// 	"Action Plan Executed",
-	//   );
-
 	const s = spinner();
-	// s.start("Analyzing codebase and thinking...");
-	/**
-	 * keeps list of tool calls, if they are completed we set that one to true.
-	 */
 	const toolCallsMap = new Map<string, SpinnerResult>();
 	for await (const item of result.getItemsStream()) {
 		switch (item.type) {

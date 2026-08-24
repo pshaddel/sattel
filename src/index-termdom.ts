@@ -36,6 +36,7 @@ const STYLES = `
     display: flex;
     flex-direction: column;
     height: 100%;
+    overflow: hidden;
   }
   .banner {
     background-color: cyan;
@@ -48,6 +49,7 @@ const STYLES = `
     flex-direction: column;
     justify-content: flex-end;
     flex-grow: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 1ch;
   }

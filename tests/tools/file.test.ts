@@ -102,21 +102,175 @@ describe("readFileTool", () => {
 });
 
 describe("writeFileTool", () => {
-	function flattenIssues(issues: z.core.$ZodIssue[]): z.core.$ZodIssue[] {
-		return issues.flatMap((issue) =>
-			issue.code === "invalid_union" ? issue.errors.flat() : [issue],
-		);
-	}
-
 	describe("replace", () => {
-		test("creates a new file from replace patches when it does not exist", async () => {
+		test("replaces an exact snippet in an existing file", async () => {
+			const filePath = tempPath("existing.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			const message = await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "b", new_string: "B" }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\nB\nc");
+			expect(message).toBe(
+				`File at path ${filePath} has been updated successfully.`,
+			);
+		});
+
+		test("applies multiple edits in order against progressively-updated content", async () => {
+			const filePath = tempPath("multi-replace.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [
+					{ old_string: "a", new_string: "A" },
+					{ old_string: "c", new_string: "C" },
+				],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("A\nb\nC");
+		});
+
+		test("throws when old_string is not found, leaving the file unchanged", async () => {
+			const filePath = tempPath("not-found.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			await expect(
+				writeFileTool.function.execute({
+					path: filePath,
+					edits: [{ old_string: "does-not-exist", new_string: "x" }],
+				}),
+			).rejects.toThrow(`old_string not found in ${filePath}`);
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\nb\nc");
+		});
+
+		test("throws when old_string matches more than once", async () => {
+			const filePath = tempPath("ambiguous.txt");
+			await fs.promises.writeFile(filePath, "dup\nb\ndup", "utf8");
+
+			await expect(
+				writeFileTool.function.execute({
+					path: filePath,
+					edits: [{ old_string: "dup", new_string: "x" }],
+				}),
+			).rejects.toThrow(/matches more than once/);
+		});
+	});
+
+	describe("insert (expressed as a replace whose new_string extends old_string)", () => {
+		test("inserts a new line right after an anchor line", async () => {
+			const filePath = tempPath("insert-single.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "b", new_string: "b\ninserted" }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\nb\ninserted\nc");
+		});
+
+		test('appends content at the end of the file via old_string: ""', async () => {
+			const filePath = tempPath("append.txt");
+			await fs.promises.writeFile(filePath, "a\nb", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "", new_string: "\nc" }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\nb\nc");
+		});
+	});
+
+	describe('delete (expressed as a replace with new_string: "")', () => {
+		test("deletes a single line", async () => {
+			const filePath = tempPath("delete-single.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "b\n", new_string: "" }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\nc");
+		});
+
+		test("deletes a whole multi-line block in one edit", async () => {
+			const filePath = tempPath("delete-block.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc\nd\ne", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "b\nc\nd\n", new_string: "" }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("a\ne");
+		});
+
+		test("combines a replace and a delete in the same edits array", async () => {
+			const filePath = tempPath("delete-and-replace.txt");
+			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [
+					{ old_string: "a", new_string: "A" },
+					{ old_string: "b\n", new_string: "" },
+				],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("A\nc");
+		});
+	});
+
+	describe("replace_all", () => {
+		test("replaces every occurrence when replace_all is true", async () => {
+			const filePath = tempPath("replace-all.txt");
+			await fs.promises.writeFile(filePath, "foo bar foo baz foo", "utf8");
+
+			await writeFileTool.function.execute({
+				path: filePath,
+				edits: [{ old_string: "foo", new_string: "qux", replace_all: true }],
+			});
+
+			const content = await fs.promises.readFile(filePath, "utf8");
+			expect(content).toBe("qux bar qux baz qux");
+		});
+
+		test("without replace_all, throws instead of guessing which occurrence to use", async () => {
+			const filePath = tempPath("replace-all-required.txt");
+			await fs.promises.writeFile(filePath, "foo bar foo", "utf8");
+
+			await expect(
+				writeFileTool.function.execute({
+					path: filePath,
+					edits: [{ old_string: "foo", new_string: "qux" }],
+				}),
+			).rejects.toThrow(/matches more than once/);
+		});
+	});
+
+	describe("file creation", () => {
+		test("creates a new file from append-style edits when it does not exist", async () => {
 			const filePath = tempPath("new-file.txt");
 
 			const message = await writeFileTool.function.execute({
 				path: filePath,
-				patch: [
-					["replace", 0, "hello"],
-					["replace", 1, "world"],
+				edits: [
+					{ old_string: "", new_string: "hello\n" },
+					{ old_string: "", new_string: "world" },
 				],
 			});
 
@@ -127,321 +281,66 @@ describe("writeFileTool", () => {
 			);
 		});
 
-		test("updates a specific line of an existing file", async () => {
-			const filePath = tempPath("existing.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["replace", 1, "B"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nB\nc");
-		});
-
-		test("ignores a replace for an out-of-range line number", async () => {
-			const filePath = tempPath("out-of-range.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["replace", 5, "z"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb");
-		});
-
-		test("ignores a replace for a negative line number", async () => {
-			const filePath = tempPath("negative.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["replace", -1, "z"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb");
-		});
-
-		test("creates a new file ignoring non-replace entries", async () => {
+		test("ignores non-append edits when creating a new file", async () => {
 			const filePath = tempPath("mixed-new-file.txt");
 
 			await writeFileTool.function.execute({
 				path: filePath,
-				patch: [
-					["replace", 0, "a"],
-					["delete", 5],
-					["insert-after", 0, "ignored"],
-					["replace", 1, "b"],
+				edits: [
+					{ old_string: "", new_string: "a\n" },
+					{ old_string: "unrelated", new_string: "ignored" },
+					{ old_string: "", new_string: "b" },
 				],
 			});
 
 			const content = await fs.promises.readFile(filePath, "utf8");
 			expect(content).toBe("a\nb");
-		});
-	});
-
-	describe("insert-after", () => {
-		test("inserts a single new line right after the specified line", async () => {
-			const filePath = tempPath("insert-single.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["insert-after", 1, "inserted"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb\ninserted\nc");
-		});
-
-		test("inserts multiple new lines at once via \\n-separated content", async () => {
-			const filePath = tempPath("insert-multi.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["insert-after", 0, "first\nsecond"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nfirst\nsecond\nb");
-		});
-
-		test("chains multiple insert-after patches targeting the same line in order", async () => {
-			const filePath = tempPath("insert-chain.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					["insert-after", 0, "first"],
-					["insert-after", 0, "second"],
-				],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nfirst\nsecond\nb");
-		});
-
-		test("appends new lines at the end of the file when targeting the last line", async () => {
-			const filePath = tempPath("insert-at-end.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["insert-after", 1, "c"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb\nc");
-		});
-
-		test("keeps other patches pointed at their original line after an insert", async () => {
-			const filePath = tempPath("insert-preserves-indices.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					["insert-after", 0, "inserted"],
-					["replace", 2, "C"],
-				],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\ninserted\nb\nC");
-		});
-
-		test("ignores an insert-after for an out-of-range line number", async () => {
-			const filePath = tempPath("insert-out-of-range.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["insert-after", 10, "ignored"]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb");
-		});
-	});
-
-	describe("delete", () => {
-		test("deletes a single line", async () => {
-			const filePath = tempPath("delete-single.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete", 1]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nc");
-		});
-
-		test("deletes multiple lines given as separate patches", async () => {
-			const filePath = tempPath("delete-multiple.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					["delete", 0],
-					["delete", 2],
-				],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("b");
-		});
-
-		test("combines a replace and a delete in the same patch array", async () => {
-			const filePath = tempPath("delete-and-replace.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					["replace", 0, "A"],
-					["delete", 1],
-				],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("A\nc");
-		});
-
-		test("ignores a delete for an out-of-range line number", async () => {
-			const filePath = tempPath("delete-out-of-range.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete", 10]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb");
-		});
-
-		test("ignores a delete for a negative line number", async () => {
-			const filePath = tempPath("delete-negative.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete", -1]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb");
-		});
-	});
-
-	describe("delete-section", () => {
-		test("deletes an inclusive range of lines", async () => {
-			const filePath = tempPath("delete-section.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc\nd", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete-section", 1, 2]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nd");
-		});
-
-		test("combines with an insert-after targeting a line before the deleted section", async () => {
-			const filePath = tempPath("delete-section-insert.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc\nd", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [
-					["insert-after", 0, "x"],
-					["delete-section", 1, 2],
-				],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nx\nd");
-		});
-
-		test("clamps a range that extends past the start and end of the file", async () => {
-			const filePath = tempPath("delete-section-clamped.txt");
-			await fs.promises.writeFile(filePath, "a\nb", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete-section", -5, 10]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("");
-		});
-
-		test("is a no-op when the start comes after the end", async () => {
-			const filePath = tempPath("delete-section-invalid-range.txt");
-			await fs.promises.writeFile(filePath, "a\nb\nc", "utf8");
-
-			await writeFileTool.function.execute({
-				path: filePath,
-				patch: [["delete-section", 2, 0]],
-			});
-
-			const content = await fs.promises.readFile(filePath, "utf8");
-			expect(content).toBe("a\nb\nc");
 		});
 	});
 
 	describe("validation", () => {
-		test("rejects an unknown mode", () => {
+		function flattenIssues(issues: z.core.$ZodIssue[]): z.core.$ZodIssue[] {
+			return issues.flatMap((issue) =>
+				issue.code === "invalid_union" ? issue.errors.flat() : [issue],
+			);
+		}
+
+		test("rejects an edit missing new_string", () => {
 			const result = writeFileTool.function.inputSchema.safeParse({
 				path: "irrelevant.txt",
-				patch: [["overwrite", 1, "content"]],
-			});
-
-			expect(result.success).toBe(false);
-		});
-
-		test("rejects a replace patch whose line number is not a number", () => {
-			const result = writeFileTool.function.inputSchema.safeParse({
-				path: "irrelevant.txt",
-				patch: [["replace", "not-a-number", "content"]],
+				edits: [{ old_string: "a" }],
 			});
 
 			expect(result.success).toBe(false);
 			expect(
 				result.success ? [] : flattenIssues(result.error.issues),
 			).toContainEqual(
-				expect.objectContaining({ code: "invalid_type", expected: "number" }),
+				expect.objectContaining({ code: "invalid_type", expected: "string" }),
 			);
 		});
 
-		test("rejects a delete patch with an extra element", () => {
+		test("rejects a non-boolean replace_all", () => {
 			const result = writeFileTool.function.inputSchema.safeParse({
 				path: "irrelevant.txt",
-				patch: [["delete", 1, "extra"]],
+				edits: [{ old_string: "a", new_string: "b", replace_all: "yes" }],
 			});
 
 			expect(result.success).toBe(false);
 		});
 
-		test("accepts one valid patch of each mode", () => {
+		test("accepts a minimal valid edit", () => {
 			const result = writeFileTool.function.inputSchema.safeParse({
 				path: "irrelevant.txt",
-				patch: [
-					["replace", 0, "content"],
-					["insert-after", 0, "content"],
-					["delete", 0],
-					["delete-section", 0, 1],
-				],
+				edits: [{ old_string: "a", new_string: "b" }],
+			});
+
+			expect(result.success).toBe(true);
+		});
+
+		test("accepts an edit with replace_all set", () => {
+			const result = writeFileTool.function.inputSchema.safeParse({
+				path: "irrelevant.txt",
+				edits: [{ old_string: "a", new_string: "b", replace_all: true }],
 			});
 
 			expect(result.success).toBe(true);
