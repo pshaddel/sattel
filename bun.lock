@@ -17,6 +17,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "css-tree@3.2.1": "patches/css-tree@3.2.1.patch",
+  },
   "packages": {
     "@b9g/termdom": ["@b9g/termdom@0.1.5", "", { "dependencies": { "arabic-persian-reshaper": "1.0.1", "bidi-js": "1.0.3", "css-tree": "^3.2.1", "linebreak": "1.1.0", "nwsapi": "^2.2.21", "parse5": "^7.3.0" } }, "sha512-ZReu9bZyH8MJWJd1VF+iFBliW3cfzv26/yVWXL7Qe0BJr5A0g6XBhGIHVcktcrgjAxaL1mvtbrhawPb5vqVNBg=="],
 

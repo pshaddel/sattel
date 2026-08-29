@@ -13,6 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun test` — unit tests; fast, offline, no network calls.
 - `bun run test:integration` — live OpenRouter integration tests (needs `OPENROUTER_API_KEY`; makes real, billed calls).
 - `bun run check` / `bun run format` — Biome lint+format check / auto-fix.
+- `bun run build` — compiles a standalone binary to `dist/sattel` (`bun build --compile`), for testing the CLI against other project directories without `bun src/index.ts`. `~/.local/bin/sattel` is symlinked to it on this machine, so re-running `bun run build` picks up code changes without re-linking.
+  - `css-tree` (a transitive dep of `@b9g/termdom`, used to parse the CSS in `src/ui/styles.ts`) loads its data files (`data/patch.json`, and `mdn-data`'s `at-rules`/`properties`/`syntaxes` JSON) via `createRequire(import.meta.url)`/plain `require(...)` at runtime. `bun build --compile`'s static analysis doesn't see through that to embed the files, so the compiled binary fails with `Cannot find module '...json' from '/$bunfs/root/sattel'`. Patched via `patches/css-tree@3.2.1.patch` (`bun patch`) to inline that JSON directly as JS literals in `lib/data.js`/`data-patch.js` and their `cjs/*` counterparts, so nothing is loaded from disk at runtime. The patch is registered in `package.json`'s `patchedDependencies` and reapplies automatically on `bun install`; if `css-tree` or `mdn-data` gets upgraded, re-check this (`bun build --compile` + run the binary is the fastest way to notice a regression here).
 - No `tsconfig.json` is configured in the repo.
 
 ## Architecture

@@ -17,5 +17,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.10"
+	},
+	"patchedDependencies": {
+		"css-tree@3.2.1": "patches/css-tree@3.2.1.patch"
 	}
 }
