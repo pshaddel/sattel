@@ -1,5 +1,6 @@
 import { TermDOM } from "@b9g/termdom";
 import type { ConversationState, StateAccessor, Tool } from "@openrouter/agent";
+import { listProjectFiles } from "./context/projectFiles";
 import {
 	projectInstructionsFileExists,
 	writeProjectInstructions,
@@ -27,6 +28,11 @@ import {
 	matchingCommands,
 	renderCommandPalette,
 } from "./ui/command-palette";
+import {
+	findActiveMentionToken,
+	type MentionToken,
+	matchingFiles,
+} from "./ui/file-mention";
 import { startSpinner } from "./ui/spinner";
 import { STYLES } from "./ui/styles";
 
@@ -57,6 +63,11 @@ async function main() {
 
 	let paletteCommands: CommandDef[] = [];
 	let paletteSelectedIndex = 0;
+	let activeMentionToken: MentionToken | null = null;
+	let projectFiles: string[] = [];
+	listProjectFiles().then((files) => {
+		projectFiles = files;
+	});
 
 	let pendingApproval: {
 		resolve: (approved: boolean) => void;
@@ -69,11 +80,18 @@ async function main() {
 
 	function updatePalette() {
 		if (pendingApproval) {
+			activeMentionToken = null;
 			paletteCommands = [];
 			renderPalette();
 			return;
 		}
-		paletteCommands = matchingCommands(input.value);
+		activeMentionToken = findActiveMentionToken(
+			input.value,
+			input.selectionStart ?? input.value.length,
+		);
+		paletteCommands = activeMentionToken
+			? matchingFiles(activeMentionToken.query, projectFiles)
+			: matchingCommands(input.value);
 		if (paletteSelectedIndex >= paletteCommands.length) {
 			paletteSelectedIndex = 0;
 		}
@@ -81,6 +99,7 @@ async function main() {
 	}
 
 	function closePalette() {
+		activeMentionToken = null;
 		paletteCommands = [];
 		paletteSelectedIndex = 0;
 		renderPalette();
@@ -430,8 +449,19 @@ async function main() {
 			}
 			if (ev.key === "Tab" && paletteCommands.length > 0) {
 				ev.preventDefault();
-				input.value = `${paletteCommands[paletteSelectedIndex].name} `;
-				input.setSelectionRange(input.value.length, input.value.length);
+				const selected = paletteCommands[paletteSelectedIndex];
+				if (activeMentionToken) {
+					const { start, end } = activeMentionToken;
+					const inserted = `@${selected.name} `;
+					input.value = `${input.value.slice(0, start)}${inserted}${input.value.slice(end)}`;
+					input.setSelectionRange(
+						start + inserted.length,
+						start + inserted.length,
+					);
+				} else {
+					input.value = `${selected.name} `;
+					input.setSelectionRange(input.value.length, input.value.length);
+				}
 				syncInput();
 			} else if (ev.key === "ArrowDown" && paletteCommands.length > 0) {
 				ev.preventDefault();
@@ -447,7 +477,13 @@ async function main() {
 			} else if (ev.key === "Enter") {
 				ev.preventDefault();
 				if (paletteCommands.length > 0) {
-					input.value = paletteCommands[paletteSelectedIndex].name;
+					const selected = paletteCommands[paletteSelectedIndex];
+					if (activeMentionToken) {
+						const { start, end } = activeMentionToken;
+						input.value = `${input.value.slice(0, start)}@${selected.name} ${input.value.slice(end)}`;
+					} else {
+						input.value = selected.name;
+					}
 					closePalette();
 				}
 
