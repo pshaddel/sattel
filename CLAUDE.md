@@ -4,15 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`sattel` is an early-stage CLI scaffold for a Claude-style AI coding agent, built with Bun and TypeScript.
+`sattel` is an early-stage CLI scaffold for a Claude-style AI coding agent, built with Bun and TypeScript. It uses OpenRouter's agent SDK (`@openrouter/agent`) for the actual LLM call and tool-calling loop.
 
 ## Commands
 
 - Package manager is Bun (`bun.lock` is present) — use `bun install` / `bun add`, not npm/yarn.
-- Run the CLI: `bun src/index.ts`
-- No `scripts` are defined in `package.json` yet, and there is no test runner, linter, or `tsconfig.json` configured in the repo.
+- Run the CLI: `bun src/index.ts`.
+- `bun test` — unit tests; fast, offline, no network calls.
+- `bun run test:integration` — live OpenRouter integration tests (needs `OPENROUTER_API_KEY`; makes real, billed calls).
+- `bun run check` / `bun run format` — Biome lint+format check / auto-fix.
+- No `tsconfig.json` is configured in the repo.
 
 ## Architecture
 
-- `src/index.ts` is the CLI entry point. It uses `@clack/prompts` for the interactive terminal UI (intro/outro, text prompt, spinner, note) and `picocolors` for terminal styling. Currently the "analysis" step is a hardcoded simulation (a timed `setTimeout`) rather than a real LLM call.
-- `src/llm/llm.ts` is an empty stub — this is where the actual LLM integration is intended to live, replacing the simulated delay in `index.ts`.
+`src/index.ts` is the single CLI entrypoint: a custom TUI built on `@b9g/termdom` (not `@clack/prompts`). It wires up `readFileTool`/`writeFileTool`/`shellTool`, a slash-command palette (`/exit`, `/quit`, `/new`, `/reset`, `/init`), and a human-approval prompt flow for shell commands (see Tools below) — approval is a mode flag layered onto the same input textarea's keydown handler (no separate confirm widget exists). `/init` runs `runInitFlow()`: refuses to run if `CLAUDE.md` already exists, otherwise does a read-only exploration turn (`runInit`, using only `readFileTool`/`shellTool`) and writes the generated content to `CLAUDE.md`.
+
+`src/llm/llm.ts` wraps the `OpenRouter` client:
+- `testStreamingLLM` — the main per-turn model call.
+- `resumeAfterApproval` — resumes a conversation paused in `awaiting_approval` status, passing `approveToolCalls`/`rejectToolCalls` (see Tools below).
+- `runInit` — the read-only exploration call backing `/init` (its prompt is defined in this file).
+- `testStreamingLLM` and `resumeAfterApproval` both inject the current `CLAUDE.md`/`AGENTS.md` content as the model's `instructions`, loaded via `src/context/projectInstructions.ts` and cached until `invalidateProjectInstructionsCache()` runs (called after `/init` writes a fresh file).
+
+`src/tools/` — tool definitions built with the SDK's `tool()`:
+- `file.ts` — `readFileTool` (line-numbered read, optional sections) and `writeFileTool` (find/replace-style edits).
+- `shell.ts` — `shellTool`, one generic shell-execution tool: `{ command, args, cwd }`, no shell interpolation (`Bun.spawn` runs the binary directly — no pipes/redirects/`&&`). `ls`/`cat`/`grep`/`git` always run; any other command needs one-time human approval via the SDK's `requireApproval` gate, then is remembered in `.sattel/settings.json` keyed on `command + args[0]` (e.g. `"npm run"`, distinct from `"npm test"`).
+- `path-guard.ts` — pure, lexical helpers (`resolveWithinRoot`/`isPathWithinRoot`) that check whether a path (absolute or relative) stays inside a root directory. `shellTool.execute` uses it to keep every path in `cwd`/`args` inside the project directory, enforced independently of the approval gate (so approving a command can't be used to escape the boundary). It does not follow symlinks.
+- `tool-display.ts` / `file.helper.ts` — turn a tool call's name + arguments into a short human-readable line for the TUI log (e.g. `Run → npm run build`).
+
+`src/settings/settings.ts` — project-local `.sattel/settings.json` store for remembered shell-command approvals. This is plain CLI code, not a tool exposed to the model — only the human-approval flow in `index.ts` writes to it.
+
+`src/context/projectInstructions.ts` — loads/writes `CLAUDE.md` or `AGENTS.md` from the project root; `projectInstructionsFileExists()` backs `/init`'s no-overwrite check.
+
+`src/ui/` — TUI helpers used by `index.ts`: `command-palette.ts` / `command-highlighter.ts` (slash-command autocomplete and matching), `spinner.ts`, `styles.ts`.
+
+Tests mirror `src/`: `tests/**/*.test.ts` are unit tests (real execution against temp directories, no mocking); `tests/**/*.integration.test.ts` make live model calls, gated behind `RUN_INTEGRATION_TESTS` + `OPENROUTER_API_KEY`, looping over the models listed in `tests/models.ts`.

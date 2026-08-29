@@ -4,6 +4,8 @@ export function toolVerb(name: string): string {
 			return "Read";
 		case "writeFile":
 			return "Write";
+		case "shell":
+			return "Run";
 		default:
 			return name;
 	}

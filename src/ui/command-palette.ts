@@ -1,4 +1,8 @@
-import { EXIT_COMMANDS, RESET_COMMANDS } from "./command-highlighter";
+import {
+	EXIT_COMMANDS,
+	INIT_COMMANDS,
+	RESET_COMMANDS,
+} from "./command-highlighter";
 
 export interface CommandDef {
 	name: string;
@@ -9,13 +13,15 @@ const DESCRIPTIONS: Record<string, string> = {
 	"/exit": "Exit the session",
 	"/quit": "Exit the session",
 	"/new": "Start a new session",
-	"/init": "Start a new session",
 	"/reset": "Start a new session",
+	"/init": "Explore the project and generate CLAUDE.md",
 };
 
-const COMMANDS: CommandDef[] = [...EXIT_COMMANDS, ...RESET_COMMANDS].map(
-	(name) => ({ name, description: DESCRIPTIONS[name] ?? "" }),
-);
+const COMMANDS: CommandDef[] = [
+	...EXIT_COMMANDS,
+	...RESET_COMMANDS,
+	...INIT_COMMANDS,
+].map((name) => ({ name, description: DESCRIPTIONS[name] ?? "" }));
 
 export const MAX_VISIBLE_COMMANDS = 5;
 

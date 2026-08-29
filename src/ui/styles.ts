@@ -38,6 +38,7 @@ export const STYLES = `
     color: #d0d0d0;
   }
   .entry.outro { color: green; font-weight: bold; }
+  .entry.approval-prompt { color: yellow; font-weight: bold; }
   .prompt-row {
     display: flex;
     align-items: center;

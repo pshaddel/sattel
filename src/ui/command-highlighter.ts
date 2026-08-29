@@ -1,7 +1,8 @@
 export const EXIT_COMMANDS = ["/exit", "/quit"];
-export const RESET_COMMANDS = ["/new", "/init", "/reset"];
+export const RESET_COMMANDS = ["/new", "/reset"];
+export const INIT_COMMANDS = ["/init"];
 
-const ALL_COMMANDS = [...EXIT_COMMANDS, ...RESET_COMMANDS];
+const ALL_COMMANDS = [...EXIT_COMMANDS, ...RESET_COMMANDS, ...INIT_COMMANDS];
 
 export function matchesAny(value: string, commands: string[]): boolean {
 	return commands.some((command) => value.includes(command));

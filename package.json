@@ -1,9 +1,10 @@
 {
 	"scripts": {
+		"build": "bun build --compile src/index.ts --outfile dist/sattel",
 		"format": "biome check --write .",
 		"check": "biome check .",
 		"test": "bun test",
-		"test:integration": "RUN_INTEGRATION_TESTS=1 bun test tests/tools/file.integration.test.ts"
+		"test:integration": "RUN_INTEGRATION_TESTS=1 bun test tests/tools/file.integration.test.ts tests/tools/shell.integration.test.ts"
 	},
 	"dependencies": {
 		"@b9g/termdom": "^0.1.5",
