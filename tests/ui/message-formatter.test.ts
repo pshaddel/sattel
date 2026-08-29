@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type CodeToken,
 	type MessageSegment,
 	parseMessageMarkdown,
 } from "../../src/ui/message-formatter";
@@ -27,6 +28,28 @@ function flattenText(segments: MessageSegment[]): string {
 			}
 		})
 		.join("");
+}
+
+/** Concatenates every text leaf in a code-block's token tree, to check the
+ * highlighter's tokens round-trip the original code without losing/altering
+ * characters, regardless of exactly how it chose to tokenize them. */
+function flattenTokens(tokens: CodeToken[]): string {
+	return tokens
+		.map((token) =>
+			token.type === "text" ? token.value : flattenTokens(token.children),
+		)
+		.join("");
+}
+
+/** Collects every className used anywhere in a code-block's token tree, to
+ * check real per-token highlighting classes (not just plain text) came
+ * back for a known language/snippet. */
+function collectClassNames(tokens: CodeToken[]): string[] {
+	return tokens.flatMap((token) =>
+		token.type === "text"
+			? []
+			: [...token.className, ...collectClassNames(token.children)],
+	);
 }
 
 describe("parseMessageMarkdown", () => {
@@ -82,21 +105,43 @@ describe("parseMessageMarkdown", () => {
 
 	test("parses a fenced code block with a language tag", () => {
 		expect(parseMessageMarkdown("```ts\nconst x = 1;\n```")).toEqual([
-			{ kind: "code-block", text: "const x = 1;", language: "ts" },
+			{
+				kind: "code-block",
+				text: "const x = 1;",
+				language: "ts",
+				tokens: expect.any(Array),
+			},
 		]);
 	});
 
 	test("parses a fenced code block with no language tag", () => {
 		expect(parseMessageMarkdown("```\nplain code\n```")).toEqual([
-			{ kind: "code-block", text: "plain code", language: undefined },
+			{
+				kind: "code-block",
+				text: "plain code",
+				language: undefined,
+				tokens: expect.any(Array),
+			},
 		]);
 	});
 
 	test("parses multiple code blocks with prose in between", () => {
 		expect(parseMessageMarkdown("```js\na\n```\nthen\n```py\nb\n```")).toEqual([
-			{ kind: "code-block", text: "a", language: "js" },
+			{
+				kind: "code-block",
+				text: "a",
+				language: "js",
+				tokens: expect.any(Array),
+			},
+			{ kind: "break" },
 			{ kind: "text", text: "then" },
-			{ kind: "code-block", text: "b", language: "py" },
+			{ kind: "break" },
+			{
+				kind: "code-block",
+				text: "b",
+				language: "py",
+				tokens: expect.any(Array),
+			},
 		]);
 	});
 
@@ -108,8 +153,30 @@ describe("parseMessageMarkdown", () => {
 				kind: "code-block",
 				text: "# not a heading\n- not a list",
 				language: undefined,
+				tokens: expect.any(Array),
 			},
 		]);
+	});
+
+	test("tokenizes a known language into real highlight.js token classes, not flat text", () => {
+		const [codeBlock] = parseMessageMarkdown(
+			"```js\n// a comment\nfunction add(a, b) { return a + b; }\n```",
+		);
+		if (codeBlock.kind !== "code-block") {
+			throw new Error("expected a code-block segment");
+		}
+		expect(collectClassNames(codeBlock.tokens)).toEqual(
+			expect.arrayContaining(["hljs-comment", "hljs-keyword"]),
+		);
+	});
+
+	test("tokenizing a code block never drops or alters the original characters", () => {
+		const code = "function add(a, b) {\n  return a + b;\n}";
+		const [codeBlock] = parseMessageMarkdown(`\`\`\`js\n${code}\n\`\`\``);
+		if (codeBlock.kind !== "code-block") {
+			throw new Error("expected a code-block segment");
+		}
+		expect(flattenTokens(codeBlock.tokens)).toBe(code);
 	});
 
 	test.each([1, 2, 3, 4, 5, 6])("parses a level-%d heading", (level) => {
@@ -157,14 +224,21 @@ describe("parseMessageMarkdown", () => {
 		]);
 	});
 
-	test("emits a break segment between prose lines but not around a code block", () => {
+	test("emits a break segment between prose lines and around a code block, so it starts and ends on its own line", () => {
 		expect(
 			parseMessageMarkdown("line one\nline two\n```\ncode\n```\nafter"),
 		).toEqual([
 			{ kind: "text", text: "line one" },
 			{ kind: "break" },
 			{ kind: "text", text: "line two" },
-			{ kind: "code-block", text: "code", language: undefined },
+			{ kind: "break" },
+			{
+				kind: "code-block",
+				text: "code",
+				language: undefined,
+				tokens: expect.any(Array),
+			},
+			{ kind: "break" },
 			{ kind: "text", text: "after" },
 		]);
 	});

@@ -27,9 +27,38 @@ export const STYLES = `
   .entry.message .md-bold { font-weight: bold; }
   .entry.message .md-italic { font-style: italic; }
   .entry.message .md-code { color: #5fafff; }
-  .entry.message .md-code-block { color: #d7ffaf; background-color: #262626; }
+  .entry.message .md-code-block { color: #e0e0e0; background-color: #1e1e1e; }
   .entry.message .md-heading { font-weight: bold; color: #ffd787; }
   .entry.message .md-list-item { color: #ffffff; }
+  .entry.message .md-code-block .hljs-comment,
+  .entry.message .md-code-block .hljs-quote { color: #6a9955; font-style: italic; }
+  .entry.message .md-code-block .hljs-keyword,
+  .entry.message .md-code-block .hljs-selector-tag,
+  .entry.message .md-code-block .hljs-tag { color: #ff79c6; font-weight: bold; }
+  .entry.message .md-code-block .hljs-string,
+  .entry.message .md-code-block .hljs-doctag,
+  .entry.message .md-code-block .hljs-regexp { color: #f1fa8c; }
+  .entry.message .md-code-block .hljs-number,
+  .entry.message .md-code-block .hljs-literal { color: #bd93f9; }
+  .entry.message .md-code-block .hljs-title,
+  .entry.message .md-code-block .hljs-title.function_,
+  .entry.message .md-code-block .hljs-section { color: #50fa7b; }
+  .entry.message .md-code-block .hljs-title.class_,
+  .entry.message .md-code-block .hljs-type { color: #8be9fd; font-weight: bold; }
+  .entry.message .md-code-block .hljs-built_in,
+  .entry.message .md-code-block .hljs-builtin-name,
+  .entry.message .md-code-block .hljs-name { color: #8be9fd; }
+  .entry.message .md-code-block .hljs-attr,
+  .entry.message .md-code-block .hljs-attribute,
+  .entry.message .md-code-block .hljs-params,
+  .entry.message .md-code-block .hljs-variable { color: #ffb86c; }
+  .entry.message .md-code-block .hljs-symbol,
+  .entry.message .md-code-block .hljs-bullet,
+  .entry.message .md-code-block .hljs-meta { color: #ff79c6; }
+  .entry.message .md-code-block .hljs-deletion { color: #ff5555; }
+  .entry.message .md-code-block .hljs-addition { color: #50fa7b; }
+  .entry.message .md-code-block .hljs-emphasis { font-style: italic; }
+  .entry.message .md-code-block .hljs-strong { font-weight: bold; }
   .entry.thinking { color: #666666; font-style: italic; }
   .entry.tool-box {
     align-self: flex-start;

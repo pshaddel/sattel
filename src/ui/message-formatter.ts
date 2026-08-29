@@ -1,20 +1,67 @@
+import { common, createLowlight } from "lowlight";
+
 export type InlineSegment =
 	| { kind: "text"; text: string }
 	| { kind: "bold"; text: string }
 	| { kind: "italic"; text: string }
 	| { kind: "code"; text: string };
 
+export type CodeToken =
+	| { type: "text"; value: string }
+	| { type: "element"; className: string[]; children: CodeToken[] };
+
 export type MessageSegment =
 	| InlineSegment
-	| { kind: "code-block"; text: string; language?: string }
+	| { kind: "code-block"; text: string; language?: string; tokens: CodeToken[] }
 	| { kind: "heading"; level: number; children: InlineSegment[] }
 	| { kind: "list-item"; children: InlineSegment[] }
 	| { kind: "break" };
+
+interface HastNode {
+	type: string;
+	value?: string;
+	properties?: { className?: string[] };
+	children?: HastNode[];
+}
 
 const CODE_BLOCK_RE = /```(\S*)\n?([\s\S]*?)```/g;
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 const LIST_ITEM_RE = /^\s*[-*]\s+(.*)$/;
 const INLINE_RE = /\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_|`([^`]+?)`/g;
+
+const lowlight = createLowlight(common);
+
+function hastToTokens(nodes: HastNode[]): CodeToken[] {
+	return nodes.map((node): CodeToken => {
+		if (node.type === "text") {
+			return { type: "text", value: node.value ?? "" };
+		}
+		return {
+			type: "element",
+			className: node.properties?.className ?? [],
+			children: hastToTokens(node.children ?? []),
+		};
+	});
+}
+
+/**
+ * Runs a fenced code block's content through highlight.js (via lowlight) for
+ * real per-token syntax highlighting, matched by the fence's language tag
+ * when it names a known language, or auto-detected otherwise. Falls back to
+ * a single plain-text token if highlighting itself throws, so a code block
+ * never fails to render just because of a malformed language tag.
+ */
+function tokenizeCode(code: string, language?: string): CodeToken[] {
+	try {
+		const tree =
+			language && lowlight.registered(language)
+				? lowlight.highlight(language, code)
+				: lowlight.highlightAuto(code);
+		return hastToTokens(tree.children as HastNode[]);
+	} catch {
+		return [{ type: "text", value: code }];
+	}
+}
 
 /**
  * Splits a line's text on bold/italic/code markers. Matches are not
@@ -108,35 +155,24 @@ export function parseMessageMarkdown(input: string): MessageSegment[] {
 	// biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop idiom
 	while ((match = CODE_BLOCK_RE.exec(input))) {
 		if (match.index > lastIndex) {
-			// The newline directly before/after a fence is the block boundary
-			// itself, not a prose line break — drop it so it doesn't produce a
-			// spurious blank line/break segment around the code block.
-			let prose = input.slice(lastIndex, match.index);
-			if (lastIndex > 0 && prose.startsWith("\n")) {
-				prose = prose.slice(1);
-			}
-			if (prose.endsWith("\n")) {
-				prose = prose.slice(0, -1);
-			}
-			if (prose) {
-				segments.push(...parseProseLines(prose));
-			}
+			// Left as-is (not stripped): the newline right before this fence is
+			// still a real line break between the preceding prose and the code
+			// block, and parseProseLines's empty-line handling turns it into a
+			// break segment with no text, which is exactly what's needed here.
+			segments.push(...parseProseLines(input.slice(lastIndex, match.index)));
 		}
+		const code = match[2].replace(/\n$/, "");
+		const language = match[1] || undefined;
 		segments.push({
 			kind: "code-block",
-			text: match[2].replace(/\n$/, ""),
-			language: match[1] || undefined,
+			text: code,
+			language,
+			tokens: tokenizeCode(code, language),
 		});
 		lastIndex = CODE_BLOCK_RE.lastIndex;
 	}
 	if (lastIndex < input.length) {
-		let prose = input.slice(lastIndex);
-		if (lastIndex > 0 && prose.startsWith("\n")) {
-			prose = prose.slice(1);
-		}
-		if (prose) {
-			segments.push(...parseProseLines(prose));
-		}
+		segments.push(...parseProseLines(input.slice(lastIndex)));
 	}
 	return segments;
 }

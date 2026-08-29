@@ -33,7 +33,11 @@ import {
 	type MentionToken,
 	matchingFiles,
 } from "./ui/file-mention";
-import type { InlineSegment, MessageSegment } from "./ui/message-formatter";
+import type {
+	CodeToken,
+	InlineSegment,
+	MessageSegment,
+} from "./ui/message-formatter";
 import { parseMessageMarkdown } from "./ui/message-formatter";
 import { startSpinner } from "./ui/spinner";
 import { STYLES } from "./ui/styles";
@@ -191,6 +195,18 @@ async function main() {
 		return span;
 	}
 
+	function renderCodeToken(token: CodeToken) {
+		if (token.type === "text") {
+			return document.createTextNode(token.value);
+		}
+		const span = document.createElement("span");
+		span.className = token.className.join(" ");
+		for (const child of token.children) {
+			span.appendChild(renderCodeToken(child));
+		}
+		return span;
+	}
+
 	function renderSegmentNode(segment: MessageSegment) {
 		switch (segment.kind) {
 			case "text":
@@ -201,7 +217,9 @@ async function main() {
 			case "code-block": {
 				const span = document.createElement("span");
 				span.className = "md-code-block";
-				span.textContent = segment.text;
+				for (const token of segment.tokens) {
+					span.appendChild(renderCodeToken(token));
+				}
 				return span;
 			}
 			case "heading": {
