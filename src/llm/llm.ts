@@ -119,10 +119,16 @@ const SAFETY_SECTION = `## Scope and safety
 - Avoid destructive or hard-to-reverse operations (deleting files, force-pushing, resetting git state) unless the user clearly asked for that.
 - Don't fabricate results — if something can't be verified with the tools available, say so.`;
 
+const FORMATTING_SECTION = `## Formatting
+- Wrap multi-line code in fenced code blocks with a language tag (e.g. \`\`\`ts).
+- Use inline backticks for filenames, commands, and short code identifiers.
+- Use **bold** sparingly, for genuinely important words only.`;
+
 export const SYSTEM_PROMPT = [
 	IDENTITY_SECTION,
 	TOOL_USAGE_SECTION,
 	SAFETY_SECTION,
+	FORMATTING_SECTION,
 ].join("\n\n");
 
 export function buildInstructions(projectInstructions?: string): string {

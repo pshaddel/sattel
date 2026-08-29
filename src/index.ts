@@ -33,6 +33,8 @@ import {
 	type MentionToken,
 	matchingFiles,
 } from "./ui/file-mention";
+import type { InlineSegment, MessageSegment } from "./ui/message-formatter";
+import { parseMessageMarkdown } from "./ui/message-formatter";
 import { startSpinner } from "./ui/spinner";
 import { STYLES } from "./ui/styles";
 
@@ -179,10 +181,71 @@ async function main() {
 	hint.textContent = "↵ send   ^J newline   ⇥ complete   esc exit";
 	document.body.appendChild(hint);
 
+	function renderInlineNode(segment: InlineSegment) {
+		if (segment.kind === "text") {
+			return document.createTextNode(segment.text);
+		}
+		const span = document.createElement("span");
+		span.className = `md-${segment.kind}`;
+		span.textContent = segment.text;
+		return span;
+	}
+
+	function renderSegmentNode(segment: MessageSegment) {
+		switch (segment.kind) {
+			case "text":
+			case "bold":
+			case "italic":
+			case "code":
+				return renderInlineNode(segment);
+			case "code-block": {
+				const span = document.createElement("span");
+				span.className = "md-code-block";
+				span.textContent = segment.text;
+				return span;
+			}
+			case "heading": {
+				const span = document.createElement("span");
+				span.className = "md-heading";
+				for (const child of segment.children) {
+					span.appendChild(renderInlineNode(child));
+				}
+				return span;
+			}
+			case "list-item": {
+				const span = document.createElement("span");
+				span.className = "md-list-item";
+				span.appendChild(document.createTextNode("• "));
+				for (const child of segment.children) {
+					span.appendChild(renderInlineNode(child));
+				}
+				return span;
+			}
+			case "break":
+				return document.createTextNode("\n");
+		}
+	}
+
+	// Assistant messages are re-rendered from scratch on every streamed
+	// update (see the "message" case in consumeAssistantStream below), since
+	// each event carries the full text so far rather than a delta.
+	function renderMessageText(entry: HTMLElement, text: string) {
+		while (entry.firstChild) {
+			entry.removeChild(entry.firstChild);
+		}
+		for (const segment of parseMessageMarkdown(text)) {
+			entry.appendChild(renderSegmentNode(segment));
+		}
+	}
+
 	function appendEntry(text: string, className: string) {
 		const entry = document.createElement("div");
 		entry.className = `entry ${className}`;
-		entry.textContent = text;
+		if (className === "message") {
+			renderMessageText(entry, text);
+		} else {
+			entry.textContent = text;
+		}
 		log.appendChild(entry);
 		entry.scrollIntoView();
 		return entry;
@@ -262,24 +325,35 @@ async function main() {
 			}
 		}
 
+		let messageEl: HTMLElement | null = null;
+		let messageId: string | null = null;
+		let reasoningEl: HTMLElement | null = null;
+		let reasoningId: string | null = null;
+
 		showThinking();
 
 		for await (const item of result.getItemsStream()) {
 			switch (item.type) {
-				case "message":
+				case "message": {
+					hideThinking();
+					const text = item.content
+						? item.content[0]
+							? (item.content[0] as { text: string }).text
+							: ""
+						: "";
+					if (item.id !== messageId) {
+						messageEl = appendEntry(text, "message");
+						messageId = item.id;
+					} else if (messageEl) {
+						renderMessageText(messageEl, text);
+					}
+					lastMessageText = text;
 					if (item.status === "completed") {
-						hideThinking();
-						const text = item.content
-							? item.content[0]
-								? (item.content[0] as { text: string }).text
-								: ""
-							: "";
-						lastMessageText = text;
-						appendEntry(text, "message");
-					} else {
-						showThinking();
+						messageEl = null;
+						messageId = null;
 					}
 					break;
+				}
 				case "function_call": {
 					const callId = item.callId || "";
 					if (item.status === "in_progress" && !toolCallsMap.has(callId)) {
@@ -304,11 +378,25 @@ async function main() {
 					}
 					break;
 				}
-				case "reasoning":
-					showThinking();
+				case "reasoning": {
+					hideThinking();
+					const text = item.summary?.[0]?.text ?? "";
+					if (item.id !== reasoningId) {
+						reasoningEl = appendEntry(text, "thinking");
+						reasoningId = item.id;
+					} else if (reasoningEl) {
+						reasoningEl.textContent = text;
+					}
+					if (item.status === "completed") {
+						reasoningEl = null;
+						reasoningId = null;
+					}
 					break;
+				}
 				case "function_call_output":
-					// no-op: tool output is reflected by the tool box above
+					// no visible content of its own; keep a generic indicator alive
+					// until the next reasoning/message item starts streaming text
+					showThinking();
 					break;
 			}
 		}
@@ -362,7 +450,7 @@ async function main() {
 		const firstText = await consumeAssistantStream(result);
 		await resolvePendingApprovals(result, TOOLS, sessionState, firstText);
 
-		appendEntry("✔ Done! Your code has been updated successfully.", "outro");
+		// appendEntry("✔ Done! Your code has been updated successfully.", "outro");
 	}
 
 	async function runInitFlow() {

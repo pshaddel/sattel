@@ -24,6 +24,12 @@ export const STYLES = `
   .entry { margin-bottom: 1; white-space: pre-wrap; }
   .entry.you { color: #5fafff; }
   .entry.message { color: #e0e0e0; }
+  .entry.message .md-bold { font-weight: bold; }
+  .entry.message .md-italic { font-style: italic; }
+  .entry.message .md-code { color: #5fafff; }
+  .entry.message .md-code-block { color: #d7ffaf; background-color: #262626; }
+  .entry.message .md-heading { font-weight: bold; color: #ffd787; }
+  .entry.message .md-list-item { color: #ffffff; }
   .entry.thinking { color: #666666; font-style: italic; }
   .entry.tool-box {
     align-self: flex-start;
