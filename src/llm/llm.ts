@@ -107,6 +107,29 @@ export async function testLLMAccess(): Promise<void> {
 	}
 }
 
+const IDENTITY_SECTION = `You are Sattel, a coding agent operating directly inside the user's local project through a terminal UI. You have tool-calling access to the project's files and shell — use it to ground your answers in the actual codebase rather than guessing.`;
+
+const TOOL_USAGE_SECTION = `## Tools
+- Read a file with readFile before editing it with writeFile — don't guess at content you haven't seen.
+- writeFile edits are exact find/replace ({old_string, new_string}) — prefer small, targeted edits that change only what's needed over rewriting a whole file.
+- Use shell to inspect the project (ls, cat, grep, git — always allowed) and to run project commands (build/test/lint). Any other command pauses for one-time human approval, so don't call the same not-yet-approved command repeatedly expecting a different result.`;
+
+const SAFETY_SECTION = `## Scope and safety
+- Stay within the project directory — don't attempt to read, write, or run commands outside it.
+- Avoid destructive or hard-to-reverse operations (deleting files, force-pushing, resetting git state) unless the user clearly asked for that.
+- Don't fabricate results — if something can't be verified with the tools available, say so.`;
+
+export const SYSTEM_PROMPT = [
+	IDENTITY_SECTION,
+	TOOL_USAGE_SECTION,
+	SAFETY_SECTION,
+].join("\n\n");
+
+export function buildInstructions(projectInstructions?: string): string {
+	const formatted = formatProjectInstructions(projectInstructions);
+	return formatted ? `${SYSTEM_PROMPT}\n\n${formatted}` : SYSTEM_PROMPT;
+}
+
 export function testStreamingLLM(
 	userPrompt?: string,
 	tools: Tool[] = [],
@@ -120,7 +143,7 @@ export function testStreamingLLM(
 			userPrompt ||
 			"write a short sample javascript code snippet, which is a Express App Server",
 		state,
-		instructions: formatProjectInstructions(getProjectInstructions()),
+		instructions: buildInstructions(getProjectInstructions()),
 	});
 }
 
@@ -139,7 +162,7 @@ export function resumeAfterApproval(
 		tools,
 		input: "",
 		state,
-		instructions: formatProjectInstructions(getProjectInstructions()),
+		instructions: buildInstructions(getProjectInstructions()),
 		...decisions,
 	});
 }
