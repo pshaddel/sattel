@@ -63,15 +63,22 @@ describe("matchingFiles", () => {
 		"README.md",
 	];
 
+	function names(query: string, list: string[]) {
+		return matchingFiles(query, list).map((entry) => entry.name);
+	}
+
 	test("matches case-insensitively on any substring of the path", () => {
-		expect(matchingFiles("UI/FILE", files)).toEqual([
-			{ name: "src/ui/file-mention.ts", description: "" },
-		]);
+		expect(names("UI/FILE", files)).toEqual(["src/ui/file-mention.ts"]);
 	});
 
 	test("returns the first N files for an empty query", () => {
-		const result = matchingFiles("", files);
-		expect(result.map((entry) => entry.name)).toEqual(files.slice(0, 4));
+		expect(names("", files)).toEqual(files.slice(0, 4));
+	});
+
+	test("returns files with no matches and an empty description for an empty query", () => {
+		expect(matchingFiles("", files)).toEqual(
+			files.map((file) => ({ name: file, description: "" })),
+		);
 	});
 
 	test("caps results at MAX_VISIBLE_FILES", () => {
@@ -87,22 +94,19 @@ describe("matchingFiles", () => {
 	});
 
 	test("strips a leading ./ before matching", () => {
-		expect(matchingFiles("./src/ui", files)).toEqual([
-			{ name: "src/ui/command-palette.ts", description: "" },
-			{ name: "src/ui/file-mention.ts", description: "" },
-			{ name: "src/index.ts", description: "" },
+		expect(names("./src/ui", files)).toEqual([
+			"src/ui/command-palette.ts",
+			"src/ui/file-mention.ts",
+			"src/index.ts",
 		]);
 	});
 
 	test("strips repeated leading ./ segments before matching", () => {
-		expect(matchingFiles("././index", files)).toEqual([
-			{ name: "src/index.ts", description: "" },
-		]);
+		expect(names("././index", files)).toEqual(["src/index.ts"]);
 	});
 
 	test("treats a bare ./ query the same as an empty query", () => {
-		const result = matchingFiles("./", files);
-		expect(result.map((entry) => entry.name)).toEqual(files.slice(0, 4));
+		expect(names("./", files)).toEqual(files.slice(0, 4));
 	});
 
 	test("does not resolve a leading ../ and simply matches nothing", () => {
@@ -114,20 +118,28 @@ describe("matchingFiles", () => {
 	});
 
 	test("tolerates a transposed pair of letters", () => {
-		expect(matchingFiles("fiel-mention", files)).toEqual([
-			{ name: "src/ui/file-mention.ts", description: "" },
-		]);
+		expect(names("fiel-mention", files)).toEqual(["src/ui/file-mention.ts"]);
 	});
 
 	test("tolerates a missing letter", () => {
-		expect(matchingFiles("comand-palette", files)).toEqual([
-			{ name: "src/ui/command-palette.ts", description: "" },
+		expect(names("comand-palette", files)).toEqual([
+			"src/ui/command-palette.ts",
 		]);
 	});
 
 	test("tolerates a wrong letter", () => {
-		expect(matchingFiles("indax", files)).toEqual([
-			{ name: "src/index.ts", description: "" },
-		]);
+		expect(names("indax", files)).toEqual(["src/index.ts"]);
+	});
+
+	test("includes the matched character ranges for highlighting", () => {
+		const [result] = matchingFiles("UI/FILE", files);
+		expect(result?.matches).toEqual([[4, 10]]);
+		expect(result?.name.slice(4, 11)).toBe("ui/file");
+	});
+
+	test("still includes matched ranges for a fuzzy (typo) match", () => {
+		const [result] = matchingFiles("indax", files);
+		expect(result?.matches).toBeDefined();
+		expect(result?.matches?.length).toBeGreaterThan(0);
 	});
 });

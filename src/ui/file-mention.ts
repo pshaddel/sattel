@@ -37,17 +37,19 @@ export function findActiveMentionToken(
 
 const FUZZY_OPTIONS = {
 	threshold: 0.4,
+	includeMatches: true,
 };
 
 /**
  * Filters project files by a case-insensitive fuzzy match anywhere in the
  * path (via Fuse.js), mapped to the same shape `renderCommandPalette`
  * already draws. Fuzzy matching tolerates typos (transposed/missing/wrong
- * characters), not just skipped ones. A leading `./` (the project root, in
- * relative-path terms) is stripped before matching, since listed paths
- * never carry that prefix themselves. A leading `../` is left as-is and
- * simply won't match anything, since listed files never go outside the
- * project root.
+ * characters), not just skipped ones. Each result carries the matched
+ * character ranges (`matches`) so the palette can highlight them. A leading
+ * `./` (the project root, in relative-path terms) is stripped before
+ * matching, since listed paths never carry that prefix themselves. A
+ * leading `../` is left as-is and simply won't match anything, since listed
+ * files never go outside the project root.
  */
 export function matchingFiles(query: string, files: string[]): CommandDef[] {
 	const needle = query.replace(/^(\.\/)+/, "");
@@ -60,5 +62,9 @@ export function matchingFiles(query: string, files: string[]): CommandDef[] {
 	return fuse
 		.search(needle)
 		.slice(0, MAX_VISIBLE_FILES)
-		.map((result) => ({ name: result.item, description: "" }));
+		.map((result) => ({
+			name: result.item,
+			description: "",
+			matches: result.matches?.[0]?.indices,
+		}));
 }

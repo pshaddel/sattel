@@ -4,9 +4,13 @@ import {
 	RESET_COMMANDS,
 } from "./command-highlighter";
 
+export type MatchRange = readonly [number, number];
+
 export interface CommandDef {
 	name: string;
 	description: string;
+	/** Inclusive [start, end] character ranges of `name` matched by a fuzzy search, for highlighting. */
+	matches?: readonly MatchRange[];
 }
 
 const DESCRIPTIONS: Record<string, string> = {
@@ -35,6 +39,41 @@ export function matchingCommands(value: string): CommandDef[] {
 	);
 }
 
+/**
+ * Renders `text` into `parent`, wrapping the character ranges in `matches`
+ * (Fuse.js's inclusive [start, end] indices) in `.palette-match` spans.
+ */
+function renderHighlightedName(
+	doc: Document,
+	parent: HTMLElement,
+	text: string,
+	matches: readonly MatchRange[] | undefined,
+) {
+	if (!matches || matches.length === 0) {
+		parent.textContent = text;
+		return;
+	}
+
+	const ranges = [...matches].sort((a, b) => a[0] - b[0]);
+	let cursor = 0;
+	for (const [start, end] of ranges) {
+		const matchStart = Math.max(start, cursor);
+		if (matchStart > cursor) {
+			parent.appendChild(doc.createTextNode(text.slice(cursor, matchStart)));
+		}
+		if (end + 1 > matchStart) {
+			const span = doc.createElement("span");
+			span.className = "palette-match";
+			span.textContent = text.slice(matchStart, end + 1);
+			parent.appendChild(span);
+			cursor = end + 1;
+		}
+	}
+	if (cursor < text.length) {
+		parent.appendChild(doc.createTextNode(text.slice(cursor)));
+	}
+}
+
 export function renderCommandPalette(
 	container: HTMLElement,
 	commands: CommandDef[],
@@ -56,7 +95,7 @@ export function renderCommandPalette(
 
 		const name = doc.createElement("span");
 		name.className = "palette-name";
-		name.textContent = command.name;
+		renderHighlightedName(doc, name, command.name, command.matches);
 
 		const description = doc.createElement("span");
 		description.className = "palette-description";

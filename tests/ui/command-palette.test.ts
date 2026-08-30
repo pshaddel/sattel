@@ -73,4 +73,54 @@ describe("renderCommandPalette", () => {
 		);
 		expect(row.querySelector(".palette-description")?.textContent).toBe("");
 	});
+
+	test("wraps matched character ranges in .palette-match spans", () => {
+		const container = makeContainer();
+		const fileEntries: CommandDef[] = [
+			{
+				name: "src/ui/file-mention.ts",
+				description: "",
+				matches: [[7, 18]],
+			},
+		];
+		renderCommandPalette(container, fileEntries, 0);
+		const name = container.children[0].querySelector(".palette-name");
+		expect(name?.textContent).toBe("src/ui/file-mention.ts");
+		const matches = name?.querySelectorAll(".palette-match");
+		expect(matches?.length).toBe(1);
+		expect(matches?.[0]?.textContent).toBe("file-mention");
+	});
+
+	test("renders unmatched text plainly around multiple match ranges", () => {
+		const container = makeContainer();
+		const fileEntries: CommandDef[] = [
+			{
+				name: "src/index.ts",
+				description: "",
+				matches: [
+					[4, 6],
+					[8, 8],
+				],
+			},
+		];
+		renderCommandPalette(container, fileEntries, 0);
+		const name = container.children[0].querySelector(".palette-name");
+		expect(name?.textContent).toBe("src/index.ts");
+		const matches = name?.querySelectorAll(".palette-match");
+		expect(Array.from(matches ?? []).map((el) => el.textContent)).toEqual([
+			"ind",
+			"x",
+		]);
+	});
+
+	test("renders a name with no matches the same as before", () => {
+		const container = makeContainer();
+		const fileEntries: CommandDef[] = [
+			{ name: "src/index.ts", description: "" },
+		];
+		renderCommandPalette(container, fileEntries, 0);
+		const name = container.children[0].querySelector(".palette-name");
+		expect(name?.textContent).toBe("src/index.ts");
+		expect(name?.querySelectorAll(".palette-match").length).toBe(0);
+	});
 });

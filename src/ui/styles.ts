@@ -107,6 +107,7 @@ export const STYLES = `
   .palette-item { display: flex; gap: 2ch; padding: 0 1ch; }
   .palette-item.selected { background-color: #1c1c1c; }
   .palette-name { color: #5fafff; font-weight: bold; min-width: 10ch; }
+  .palette-match { color: #ffd75f; }
   .palette-description { color: #888888; }
   .palette-item.selected .palette-description { color: #cfcfcf; }
   .hint {
