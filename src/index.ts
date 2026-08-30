@@ -5,6 +5,7 @@ import {
 	projectInstructionsFileExists,
 	writeProjectInstructions,
 } from "./context/projectInstructions";
+import { getRecentFiles, recordFileMention } from "./db/file.db";
 import {
 	invalidateProjectInstructionsCache,
 	resumeAfterApproval,
@@ -84,6 +85,17 @@ async function main() {
 		renderCommandPalette(commandPalette, paletteCommands, paletteSelectedIndex);
 	}
 
+	// When the user has just typed a bare `@` (no query yet), show their most
+	// recently mentioned files instead of the alphabetical project listing.
+	// Falls back to that listing when there's no mention history yet (fresh
+	// project, or the DB read failed) so the palette is never empty.
+	function recentFileMentionCommands(): CommandDef[] {
+		const recent = getRecentFiles();
+		return recent.length > 0
+			? recent.map((file) => ({ name: file, description: "" }))
+			: matchingFiles("", projectFiles);
+	}
+
 	function updatePalette() {
 		if (pendingApproval) {
 			activeMentionToken = null;
@@ -96,7 +108,9 @@ async function main() {
 			input.selectionStart ?? input.value.length,
 		);
 		paletteCommands = activeMentionToken
-			? matchingFiles(activeMentionToken.query, projectFiles)
+			? activeMentionToken.query === ""
+				? recentFileMentionCommands()
+				: matchingFiles(activeMentionToken.query, projectFiles)
 			: matchingCommands(input.value);
 		if (paletteSelectedIndex >= paletteCommands.length) {
 			paletteSelectedIndex = 0;
@@ -557,6 +571,7 @@ async function main() {
 				ev.preventDefault();
 				const selected = paletteCommands[paletteSelectedIndex];
 				if (activeMentionToken) {
+					recordFileMention(selected.name);
 					const { start, end } = activeMentionToken;
 					const inserted = `@${selected.name} `;
 					input.value = `${input.value.slice(0, start)}${inserted}${input.value.slice(end)}`;
@@ -585,6 +600,7 @@ async function main() {
 				if (paletteCommands.length > 0) {
 					const selected = paletteCommands[paletteSelectedIndex];
 					if (activeMentionToken) {
+						recordFileMention(selected.name);
 						const { start, end } = activeMentionToken;
 						input.value = `${input.value.slice(0, start)}@${selected.name} ${input.value.slice(end)}`;
 					} else {
