@@ -90,6 +90,7 @@ describe("matchingFiles", () => {
 		expect(matchingFiles("./src/ui", files)).toEqual([
 			{ name: "src/ui/command-palette.ts", description: "" },
 			{ name: "src/ui/file-mention.ts", description: "" },
+			{ name: "src/index.ts", description: "" },
 		]);
 	});
 
@@ -110,5 +111,23 @@ describe("matchingFiles", () => {
 
 	test("returns an empty array for an empty file list", () => {
 		expect(matchingFiles("src", [])).toEqual([]);
+	});
+
+	test("tolerates a transposed pair of letters", () => {
+		expect(matchingFiles("fiel-mention", files)).toEqual([
+			{ name: "src/ui/file-mention.ts", description: "" },
+		]);
+	});
+
+	test("tolerates a missing letter", () => {
+		expect(matchingFiles("comand-palette", files)).toEqual([
+			{ name: "src/ui/command-palette.ts", description: "" },
+		]);
+	});
+
+	test("tolerates a wrong letter", () => {
+		expect(matchingFiles("indax", files)).toEqual([
+			{ name: "src/index.ts", description: "" },
+		]);
 	});
 });
