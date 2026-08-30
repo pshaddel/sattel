@@ -15,7 +15,6 @@ export const STYLES = `
   .log {
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
     flex-grow: 1;
     min-height: 0;
     overflow-y: auto;
