@@ -222,7 +222,8 @@ async function main() {
 
 	const hint = document.createElement("div");
 	hint.className = "hint";
-	hint.textContent = "↵ send   ^J newline   ⇥ complete   esc cancel   ^C quit";
+	hint.textContent =
+		"↵ send   ^J newline   ⇥ complete   PgUp/PgDn scroll   esc cancel   ^C quit";
 	document.body.appendChild(hint);
 
 	function renderInlineNode(segment: InlineSegment) {
@@ -296,6 +297,26 @@ async function main() {
 		}
 	}
 
+	// Whether the log is currently scrolled to (or within a hair of) the
+	// bottom. Used to decide whether new/growing content should pull the
+	// view down with it, so a user who scrolled up to reread earlier
+	// output isn't yanked back down on every update.
+	function isLogAtBottom(): boolean {
+		return log.scrollTop + log.clientHeight >= log.scrollHeight - 1;
+	}
+
+	// Runs `mutate`, then re-pins the log to its bottom if (and only if) it
+	// was already at the bottom beforehand. Every place that appends a new
+	// entry or grows an existing entry's content in place should go
+	// through this so long/streamed output keeps scrolling into view.
+	function withAutoScroll(mutate: () => void) {
+		const wasAtBottom = isLogAtBottom();
+		mutate();
+		if (wasAtBottom) {
+			log.scrollTop = log.scrollHeight;
+		}
+	}
+
 	function appendEntry(text: string, className: string) {
 		const entry = document.createElement("div");
 		entry.className = `entry ${className}`;
@@ -304,8 +325,9 @@ async function main() {
 		} else {
 			entry.textContent = text;
 		}
-		log.appendChild(entry);
-		entry.scrollIntoView();
+		withAutoScroll(() => {
+			log.appendChild(entry);
+		});
 		return entry;
 	}
 
@@ -369,8 +391,11 @@ async function main() {
 			if (thinkingEl) return;
 			thinkingEl = appendEntry("", "thinking");
 			stopThinkingSpinner = startSpinner((frame) => {
-				if (thinkingEl) {
-					thinkingEl.textContent = `${frame} Thinking…`;
+				const el = thinkingEl;
+				if (el) {
+					withAutoScroll(() => {
+						el.textContent = `${frame} Thinking…`;
+					});
 				}
 			});
 		}
@@ -407,7 +432,10 @@ async function main() {
 							messageEl = appendEntry(text, "message");
 							messageId = item.id;
 						} else if (messageEl) {
-							renderMessageText(messageEl, text);
+							const el = messageEl;
+							withAutoScroll(() => {
+								renderMessageText(el, text);
+							});
 						}
 						lastMessageText = text;
 						if (item.status === "completed") {
@@ -423,7 +451,9 @@ async function main() {
 							const verb = toolVerb(item.name);
 							const el = appendEntry("", "tool-box");
 							const stop = startSpinner((frame) => {
-								el.textContent = `${frame} ${verb}`;
+								withAutoScroll(() => {
+									el.textContent = `${frame} ${verb}`;
+								});
 							});
 							toolCallsMap.set(callId, { el, stop, verb });
 							break;
@@ -433,8 +463,10 @@ async function main() {
 							if (call) {
 								call.stop();
 								const target = describeToolCallJson(item.name, item.arguments);
-								call.el.className = "entry tool-box done";
-								call.el.textContent = `${call.verb} → ${target}`;
+								withAutoScroll(() => {
+									call.el.className = "entry tool-box done";
+									call.el.textContent = `${call.verb} → ${target}`;
+								});
 							}
 							break;
 						}
@@ -447,7 +479,10 @@ async function main() {
 							reasoningEl = appendEntry(text, "thinking");
 							reasoningId = item.id;
 						} else if (reasoningEl) {
-							reasoningEl.textContent = text;
+							const el = reasoningEl;
+							withAutoScroll(() => {
+								el.textContent = text;
+							});
 						}
 						if (item.status === "completed") {
 							reasoningEl = null;
@@ -578,6 +613,16 @@ async function main() {
 	input.addEventListener(
 		"keydown",
 		(ev) => {
+			if (ev.key === "PageUp") {
+				ev.preventDefault();
+				log.scrollTop -= log.clientHeight;
+				return;
+			}
+			if (ev.key === "PageDown") {
+				ev.preventDefault();
+				log.scrollTop += log.clientHeight;
+				return;
+			}
 			if (pendingApproval) {
 				if (ev.key !== "Enter" && ev.key !== "Escape") {
 					return;
