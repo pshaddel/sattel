@@ -29,6 +29,7 @@ import {
 	matchingCommands,
 	renderCommandPalette,
 } from "./ui/command-palette";
+import { resolveEscapeAction } from "./ui/escape-action";
 import {
 	findActiveMentionToken,
 	type MentionToken,
@@ -45,6 +46,29 @@ import { STYLES } from "./ui/styles";
 
 const TOOLS: Tool[] = [readFileTool, writeFileTool, shellTool];
 const INIT_TOOLS: Tool[] = [readFileTool, shellTool];
+
+function isBenignAbortError(err: unknown): boolean {
+	return err instanceof Error && err.name === "AbortError";
+}
+
+// Cancelling an in-flight turn via Escape calls AbortController.abort(),
+// which in this environment (Bun + @b9g/termdom's synthetic DOM) can surface
+// as an uncaught/unhandled AbortError instead of propagating through the
+// normal call stack a local try/catch would see — the abort event's listener
+// exception is reported globally rather than thrown back to the abort()
+// caller. Swallow only that specific, expected error here so cancelling a
+// turn can never crash Sattel; anything else still crashes loudly.
+process.on("uncaughtException", (err) => {
+	if (isBenignAbortError(err)) return;
+	console.error(err);
+	process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+	if (isBenignAbortError(reason)) return;
+	console.error(reason);
+	process.exit(1);
+});
 
 async function main() {
 	const term = new TermDOM();
@@ -81,7 +105,7 @@ async function main() {
 		questionText: string;
 	} | null = null;
 
-	let activeTurn: { cancel: () => void; cancelled: boolean } | null = null;
+	let activeTurn: AbortController | null = null;
 
 	function renderPalette() {
 		renderCommandPalette(commandPalette, paletteCommands, paletteSelectedIndex);
@@ -198,7 +222,7 @@ async function main() {
 
 	const hint = document.createElement("div");
 	hint.className = "hint";
-	hint.textContent = "↵ send   ^J newline   ⇥ complete   esc exit";
+	hint.textContent = "↵ send   ^J newline   ⇥ complete   esc cancel   ^C quit";
 	document.body.appendChild(hint);
 
 	function renderInlineNode(segment: InlineSegment) {
@@ -328,6 +352,7 @@ async function main() {
 
 	async function consumeAssistantStream(
 		result: ReturnType<typeof testStreamingLLM>,
+		controller: AbortController,
 	): Promise<string | undefined> {
 		let lastMessageText: string | undefined;
 		const toolCallsMap = new Map<
@@ -335,8 +360,7 @@ async function main() {
 			{ el: HTMLElement; stop: () => void; verb: string }
 		>();
 
-		const turn = { cancel: () => void result.cancel(), cancelled: false };
-		activeTurn = turn;
+		activeTurn = controller;
 
 		let thinkingEl: HTMLElement | null = null;
 		let stopThinkingSpinner: (() => void) | null = null;
@@ -439,13 +463,13 @@ async function main() {
 				}
 			}
 		} catch (err) {
-			if (!turn.cancelled) throw err;
+			if (!controller.signal.aborted) throw err;
 		} finally {
 			for (const call of toolCallsMap.values()) {
 				call.stop();
 			}
 			hideThinking();
-			if (activeTurn === turn) {
+			if (activeTurn === controller) {
 				activeTurn = null;
 			}
 		}
@@ -457,9 +481,10 @@ async function main() {
 		result: ReturnType<typeof testStreamingLLM>,
 		tools: Tool[],
 		state: StateAccessor,
+		controller: AbortController,
 		lastMessageText?: string,
 	): Promise<string | undefined> {
-		while (await result.requiresApproval()) {
+		while (!controller.signal.aborted && (await result.requiresApproval())) {
 			const pending = await result.getPendingToolCalls();
 			const approveToolCalls: string[] = [];
 			const rejectToolCalls: string[] = [];
@@ -482,11 +507,13 @@ async function main() {
 				}
 			}
 
-			result = resumeAfterApproval(tools, state, {
-				approveToolCalls,
-				rejectToolCalls,
-			});
-			lastMessageText = await consumeAssistantStream(result);
+			result = resumeAfterApproval(
+				tools,
+				state,
+				{ approveToolCalls, rejectToolCalls },
+				controller.signal,
+			);
+			lastMessageText = await consumeAssistantStream(result, controller);
 		}
 		return lastMessageText;
 	}
@@ -494,9 +521,21 @@ async function main() {
 	async function handlePrompt(userPrompt: string) {
 		appendEntry(userPrompt, "you");
 
-		const result = testStreamingLLM(userPrompt, TOOLS, sessionState);
-		const firstText = await consumeAssistantStream(result);
-		await resolvePendingApprovals(result, TOOLS, sessionState, firstText);
+		const controller = new AbortController();
+		const result = testStreamingLLM(
+			userPrompt,
+			TOOLS,
+			sessionState,
+			controller.signal,
+		);
+		const firstText = await consumeAssistantStream(result, controller);
+		await resolvePendingApprovals(
+			result,
+			TOOLS,
+			sessionState,
+			controller,
+			firstText,
+		);
 
 		// appendEntry("✔ Done! Your code has been updated successfully.", "outro");
 	}
@@ -512,12 +551,14 @@ async function main() {
 			return;
 		}
 
-		const result = runInit(INIT_TOOLS, initSessionState);
-		const firstText = await consumeAssistantStream(result);
+		const controller = new AbortController();
+		const result = runInit(INIT_TOOLS, initSessionState, controller.signal);
+		const firstText = await consumeAssistantStream(result, controller);
 		const finalText = await resolvePendingApprovals(
 			result,
 			INIT_TOOLS,
 			initSessionState,
+			controller,
 			firstText,
 		);
 
@@ -653,17 +694,34 @@ async function main() {
 				input.setSelectionRange(start + 1, start + 1);
 				syncInput();
 			} else if (ev.key === "Escape") {
-				if (paletteCommands.length > 0) {
-					ev.preventDefault();
-					closePalette();
-				} else if (activeTurn && !activeTurn.cancelled) {
-					ev.preventDefault();
-					activeTurn.cancelled = true;
-					activeTurn.cancel();
-					appendEntry("✘ Cancelled.", "outro");
-					input.focus();
-				} else {
-					endSession();
+				const action = resolveEscapeAction({
+					paletteOpen: paletteCommands.length > 0,
+					hasActiveTurn: activeTurn !== null,
+					turnCancelled: activeTurn?.signal.aborted ?? false,
+				});
+				switch (action) {
+					case "close-palette":
+						ev.preventDefault();
+						closePalette();
+						break;
+					case "cancel-turn":
+						ev.preventDefault();
+						try {
+							activeTurn?.abort();
+						} catch {
+							// In this environment abort() can itself throw
+							// synchronously (an in-flight request's own abort
+							// handling rejects before abort() returns).
+							// signal.aborted is already true by the time that
+							// happens, so cancellation still takes effect —
+							// only the crash needs suppressing.
+						}
+						appendEntry("✘ Cancelled.", "outro");
+						input.focus();
+						break;
+					case "ignore":
+						ev.preventDefault();
+						break;
 				}
 			} else if (ev.key === "c" && ev.ctrlKey) {
 				endSession();

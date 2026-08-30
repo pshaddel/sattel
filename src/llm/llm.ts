@@ -62,12 +62,17 @@ Keep the whole file concise — a competent engineer should be able to read it i
  * in `../context/projectInstructions`) and for supplying a read-only `tools`
  * array (e.g. `[readFileTool, shellTool]`, no `writeFileTool`).
  */
-export function runInit(tools: Tool[], state?: StateAccessor) {
+export function runInit(
+	tools: Tool[],
+	state?: StateAccessor,
+	signal?: AbortSignal,
+) {
 	return openrouter.callModel({
 		model: "openai/gpt-5-nano",
 		tools,
 		input: INIT_PROMPT,
 		state,
+		signal,
 	});
 }
 
@@ -140,6 +145,7 @@ export function testStreamingLLM(
 	userPrompt?: string,
 	tools: Tool[] = [],
 	state?: StateAccessor,
+	signal?: AbortSignal,
 ) {
 	return openrouter.callModel({
 		model: "openai/gpt-5-nano",
@@ -150,6 +156,7 @@ export function testStreamingLLM(
 			"write a short sample javascript code snippet, which is a Express App Server",
 		state,
 		instructions: buildInstructions(getProjectInstructions()),
+		signal,
 	});
 }
 
@@ -162,6 +169,7 @@ export function resumeAfterApproval(
 	tools: Tool[],
 	state: StateAccessor,
 	decisions: { approveToolCalls?: string[]; rejectToolCalls?: string[] },
+	signal?: AbortSignal,
 ) {
 	return openrouter.callModel({
 		model: "openai/gpt-5-nano",
@@ -170,5 +178,6 @@ export function resumeAfterApproval(
 		state,
 		instructions: buildInstructions(getProjectInstructions()),
 		...decisions,
+		signal,
 	});
 }
