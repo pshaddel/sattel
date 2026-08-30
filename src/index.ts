@@ -81,6 +81,8 @@ async function main() {
 		questionText: string;
 	} | null = null;
 
+	let activeTurn: { cancel: () => void; cancelled: boolean } | null = null;
+
 	function renderPalette() {
 		renderCommandPalette(commandPalette, paletteCommands, paletteSelectedIndex);
 	}
@@ -333,6 +335,9 @@ async function main() {
 			{ el: HTMLElement; stop: () => void; verb: string }
 		>();
 
+		const turn = { cancel: () => void result.cancel(), cancelled: false };
+		activeTurn = turn;
+
 		let thinkingEl: HTMLElement | null = null;
 		let stopThinkingSpinner: (() => void) | null = null;
 
@@ -364,76 +369,87 @@ async function main() {
 
 		showThinking();
 
-		for await (const item of result.getItemsStream()) {
-			switch (item.type) {
-				case "message": {
-					hideThinking();
-					const text = item.content
-						? item.content[0]
-							? (item.content[0] as { text: string }).text
-							: ""
-						: "";
-					if (item.id !== messageId) {
-						messageEl = appendEntry(text, "message");
-						messageId = item.id;
-					} else if (messageEl) {
-						renderMessageText(messageEl, text);
-					}
-					lastMessageText = text;
-					if (item.status === "completed") {
-						messageEl = null;
-						messageId = null;
-					}
-					break;
-				}
-				case "function_call": {
-					const callId = item.callId || "";
-					if (item.status === "in_progress" && !toolCallsMap.has(callId)) {
+		try {
+			for await (const item of result.getItemsStream()) {
+				switch (item.type) {
+					case "message": {
 						hideThinking();
-						const verb = toolVerb(item.name);
-						const el = appendEntry("", "tool-box");
-						const stop = startSpinner((frame) => {
-							el.textContent = `${frame} ${verb}`;
-						});
-						toolCallsMap.set(callId, { el, stop, verb });
-						break;
-					}
-					if (item.status === "completed") {
-						const call = toolCallsMap.get(callId);
-						if (call) {
-							call.stop();
-							const target = describeToolCallJson(item.name, item.arguments);
-							call.el.className = "entry tool-box done";
-							call.el.textContent = `${call.verb} → ${target}`;
+						const text = item.content
+							? item.content[0]
+								? (item.content[0] as { text: string }).text
+								: ""
+							: "";
+						if (item.id !== messageId) {
+							messageEl = appendEntry(text, "message");
+							messageId = item.id;
+						} else if (messageEl) {
+							renderMessageText(messageEl, text);
+						}
+						lastMessageText = text;
+						if (item.status === "completed") {
+							messageEl = null;
+							messageId = null;
 						}
 						break;
 					}
-					break;
-				}
-				case "reasoning": {
-					hideThinking();
-					const text = item.summary?.[0]?.text ?? "";
-					if (item.id !== reasoningId) {
-						reasoningEl = appendEntry(text, "thinking");
-						reasoningId = item.id;
-					} else if (reasoningEl) {
-						reasoningEl.textContent = text;
+					case "function_call": {
+						const callId = item.callId || "";
+						if (item.status === "in_progress" && !toolCallsMap.has(callId)) {
+							hideThinking();
+							const verb = toolVerb(item.name);
+							const el = appendEntry("", "tool-box");
+							const stop = startSpinner((frame) => {
+								el.textContent = `${frame} ${verb}`;
+							});
+							toolCallsMap.set(callId, { el, stop, verb });
+							break;
+						}
+						if (item.status === "completed") {
+							const call = toolCallsMap.get(callId);
+							if (call) {
+								call.stop();
+								const target = describeToolCallJson(item.name, item.arguments);
+								call.el.className = "entry tool-box done";
+								call.el.textContent = `${call.verb} → ${target}`;
+							}
+							break;
+						}
+						break;
 					}
-					if (item.status === "completed") {
-						reasoningEl = null;
-						reasoningId = null;
+					case "reasoning": {
+						hideThinking();
+						const text = item.summary?.[0]?.text ?? "";
+						if (item.id !== reasoningId) {
+							reasoningEl = appendEntry(text, "thinking");
+							reasoningId = item.id;
+						} else if (reasoningEl) {
+							reasoningEl.textContent = text;
+						}
+						if (item.status === "completed") {
+							reasoningEl = null;
+							reasoningId = null;
+						}
+						break;
 					}
-					break;
+					case "function_call_output":
+						// no visible content of its own; keep a generic indicator alive
+						// until the next reasoning/message item starts streaming text
+						showThinking();
+						break;
 				}
-				case "function_call_output":
-					// no visible content of its own; keep a generic indicator alive
-					// until the next reasoning/message item starts streaming text
-					showThinking();
-					break;
+			}
+		} catch (err) {
+			if (!turn.cancelled) throw err;
+		} finally {
+			for (const call of toolCallsMap.values()) {
+				call.stop();
+			}
+			hideThinking();
+			if (activeTurn === turn) {
+				activeTurn = null;
 			}
 		}
 
-		hideThinking();
 		return lastMessageText;
 	}
 
@@ -640,6 +656,12 @@ async function main() {
 				if (paletteCommands.length > 0) {
 					ev.preventDefault();
 					closePalette();
+				} else if (activeTurn && !activeTurn.cancelled) {
+					ev.preventDefault();
+					activeTurn.cancelled = true;
+					activeTurn.cancel();
+					appendEntry("✘ Cancelled.", "outro");
+					input.focus();
 				} else {
 					endSession();
 				}
