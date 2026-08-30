@@ -51,6 +51,24 @@ function isBenignAbortError(err: unknown): boolean {
 	return err instanceof Error && err.name === "AbortError";
 }
 
+// Switches the terminal to the alternate screen buffer (the same mechanism
+// vim/less/htop use), so the shell's existing scrollback is hidden behind
+// Sattel's screen instead of sitting above it and interfering with the log's
+// own PageUp/PageDown scrolling. Deliberately raw ANSI rather than termdom's
+// Fullscreen API (`element.requestFullscreen()`): that API's global Escape
+// handler intercepts Escape whenever a text field is focused (our `input` is
+// always focused) and blurs it instead of dispatching a keydown event, which
+// would silently break this app's own Escape-to-cancel/close-palette
+// handling. Writing the raw codes ourselves leaves termdom's
+// `kFullscreenManager` state untouched, so that interception never engages.
+function enterAltScreen() {
+	process.stdout.write("\x1B[?1049h\x1B[2J\x1B[H");
+}
+
+function exitAltScreen() {
+	process.stdout.write("\x1B[?25h\x1B[?1049l");
+}
+
 // Cancelling an in-flight turn via Escape calls AbortController.abort(),
 // which in this environment (Bun + @b9g/termdom's synthetic DOM) can surface
 // as an uncaught/unhandled AbortError instead of propagating through the
@@ -60,17 +78,20 @@ function isBenignAbortError(err: unknown): boolean {
 // turn can never crash Sattel; anything else still crashes loudly.
 process.on("uncaughtException", (err) => {
 	if (isBenignAbortError(err)) return;
+	exitAltScreen();
 	console.error(err);
 	process.exit(1);
 });
 
 process.on("unhandledRejection", (reason) => {
 	if (isBenignAbortError(reason)) return;
+	exitAltScreen();
 	console.error(reason);
 	process.exit(1);
 });
 
 async function main() {
+	enterAltScreen();
 	const term = new TermDOM();
 	await term.attach();
 	const { document } = term;
@@ -332,7 +353,10 @@ async function main() {
 	}
 
 	function endSession() {
-		term.dispose().then(() => process.exit(0));
+		term.dispose().then(() => {
+			exitAltScreen();
+			process.exit(0);
+		});
 	}
 
 	let conversationState: ConversationState | null = null;
