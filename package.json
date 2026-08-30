@@ -1,4 +1,6 @@
 {
+	"name": "sattel",
+	"version": "0.1.0",
 	"scripts": {
 		"build": "bun build --compile src/index.ts --outfile dist/sattel",
 		"format": "biome check --write .",

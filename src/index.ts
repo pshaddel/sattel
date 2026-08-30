@@ -1,5 +1,6 @@
 import { TermDOM } from "@b9g/termdom";
 import type { ConversationState, StateAccessor, Tool } from "@openrouter/agent";
+import packageJson from "../package.json" with { type: "json" };
 import { listProjectFiles } from "./context/projectFiles";
 import {
 	projectInstructionsFileExists,
@@ -99,11 +100,6 @@ async function main() {
 	const style = document.createElement("style");
 	style.textContent = STYLES;
 	document.head.appendChild(style);
-
-	const banner = document.createElement("div");
-	banner.className = "banner";
-	banner.textContent = "Sattel Coding Agent";
-	document.body.appendChild(banner);
 
 	const log = document.createElement("div");
 	log.className = "log";
@@ -247,6 +243,8 @@ async function main() {
 		"↵ send   ^J newline   ⇥ complete   PgUp/PgDn scroll   esc cancel   ^C quit";
 	document.body.appendChild(hint);
 
+	appendEntry(`[logo]\n\nSattel v${packageJson.version}\n\n`, "header");
+
 	function renderInlineNode(segment: InlineSegment) {
 		if (segment.kind === "text") {
 			return document.createTextNode(segment.text);
@@ -333,7 +331,13 @@ async function main() {
 	function withAutoScroll(mutate: () => void) {
 		const wasAtBottom = isLogAtBottom();
 		mutate();
-		if (wasAtBottom) {
+		// Only reassign scrollTop once content genuinely overflows the
+		// viewport (scrollHeight > clientHeight). termdom's scrollTop setter
+		// clamps against a stale/incorrect max while content still fits
+		// entirely on screen, which scrolls a couple of rows past the top
+		// and hides the first entries for no reason — skip the assignment
+		// in that regime since there's nothing to scroll to anyway.
+		if (wasAtBottom && log.scrollHeight > log.clientHeight) {
 			log.scrollTop = log.scrollHeight;
 		}
 	}

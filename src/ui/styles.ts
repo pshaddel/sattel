@@ -6,12 +6,6 @@ export const STYLES = `
     height: 100%;
     overflow: hidden;
   }
-  .banner {
-    background-color: cyan;
-    color: black;
-    font-weight: bold;
-    padding: 0 1ch;
-  }
   .log {
     display: flex;
     flex-direction: column;
@@ -21,6 +15,7 @@ export const STYLES = `
     padding: 1ch;
   }
   .entry { margin-bottom: 1; white-space: pre-wrap; }
+  .entry.header { color: cyan; font-weight: bold; }
   .entry.you { color: #5fafff; }
   .entry.message { color: #e0e0e0; }
   .entry.message .md-bold { font-weight: bold; }
