@@ -181,3 +181,74 @@ export function resumeAfterApproval(
 		signal,
 	});
 }
+
+export function buildSessionTitlePrompt(
+	firstUserMessage: string,
+	firstAssistantMessage?: string,
+): string {
+	const parts = [
+		"Respond with ONLY a 3-6 word title summarizing what this conversation is about. No quotes, no trailing punctuation, no preamble.",
+		"",
+		`User: ${firstUserMessage}`,
+	];
+	if (firstAssistantMessage) {
+		parts.push(`Assistant: ${firstAssistantMessage}`);
+	}
+	return parts.join("\n");
+}
+
+const MAX_TITLE_LENGTH = 60;
+
+/**
+ * Cleans up a model's raw title response: trims surrounding whitespace and
+ * one layer of wrapping quotes, collapses internal whitespace/newlines,
+ * strips trailing punctuation, and caps length at a word boundary. Returns
+ * `undefined` for an empty/whitespace-only result, since callers treat that
+ * as "no title" rather than storing an empty string.
+ */
+export function sanitizeTitle(raw: string): string | undefined {
+	let title = raw.trim().replace(/\s+/g, " ");
+	const quoted = title.match(/^(["'`])(.*)\1$/);
+	if (quoted) {
+		title = quoted[2] ?? "";
+	}
+	title = title.replace(/[.!?:,]+$/, "").trim();
+
+	if (title.length > MAX_TITLE_LENGTH) {
+		title = title.slice(0, MAX_TITLE_LENGTH);
+		const lastSpace = title.lastIndexOf(" ");
+		if (lastSpace > 0) {
+			title = title.slice(0, lastSpace);
+		}
+		title = title.trim();
+	}
+
+	return title === "" ? undefined : title;
+}
+
+/**
+ * One-shot (non-streaming) call generating a short session title from a
+ * session's first exchange, for display in the `/resume` picker. Fire-and-
+ * forget from the caller's perspective: any failure (missing API key,
+ * network error, empty response) resolves to `undefined` rather than
+ * throwing, since a missing title is a harmless degraded state, never worth
+ * surfacing or retrying. `model` defaults to the same model used elsewhere
+ * in this file; it's a parameter (unlike the other functions here) so
+ * integration tests can loop over multiple models.
+ */
+export async function generateSessionTitle(
+	firstUserMessage: string,
+	firstAssistantMessage?: string,
+	model: string = "openai/gpt-5-nano",
+): Promise<string | undefined> {
+	try {
+		const result = openrouter.callModel({
+			model,
+			input: buildSessionTitlePrompt(firstUserMessage, firstAssistantMessage),
+		});
+		const text = await result.getText();
+		return text ? sanitizeTitle(text) : undefined;
+	} catch {
+		return undefined;
+	}
+}

@@ -8,6 +8,14 @@ import {
 } from "./context/projectInstructions";
 import { getRecentFiles, recordFileMention } from "./db/file.db";
 import {
+	listSessions,
+	loadSession,
+	saveSession,
+	setSessionTitle,
+} from "./db/session.db";
+import { extractReplayItems } from "./llm/conversation-messages";
+import {
+	generateSessionTitle,
 	invalidateProjectInstructionsCache,
 	resumeAfterApproval,
 	runInit,
@@ -24,7 +32,9 @@ import {
 	INIT_COMMANDS,
 	matchesAny,
 	RESET_COMMANDS,
+	SESSION_COMMANDS,
 } from "./ui/command-highlighter";
+import { resolveHistoryNav } from "./ui/command-history";
 import {
 	type CommandDef,
 	matchingCommands,
@@ -42,6 +52,7 @@ import type {
 	MessageSegment,
 } from "./ui/message-formatter";
 import { parseMessageMarkdown } from "./ui/message-formatter";
+import { relativeDate } from "./ui/relative-date";
 import { startSpinner } from "./ui/spinner";
 import { STYLES } from "./ui/styles";
 
@@ -123,6 +134,18 @@ async function main() {
 	} | null = null;
 
 	let activeTurn: AbortController | null = null;
+
+	let commandHistory: string[] = [];
+	let historyIndex = -1;
+	let titleGenerated = false;
+
+	let sessionPickerOpen = false;
+	let sessionPickerSessions: {
+		id: string;
+		title: string | null;
+		updatedAt: string;
+	}[] = [];
+	let sessionPickerSelectedIndex = 0;
 
 	function renderPalette() {
 		renderCommandPalette(commandPalette, paletteCommands, paletteSelectedIndex);
@@ -228,7 +251,14 @@ async function main() {
 		renderOverlay();
 		updatePalette();
 	}
-	input.addEventListener("input", syncInput);
+	input.addEventListener("input", () => {
+		// Only a genuine keystroke reaches this listener — termdom's
+		// programmatic `input.value = ...` assignment (used by history
+		// recall/palette completion) doesn't itself dispatch "input", so this
+		// exiting recall here can't undo the index those call sites just set.
+		historyIndex = -1;
+		syncInput();
+	});
 	syncInput();
 
 	inputWrap.appendChild(input);
@@ -368,6 +398,7 @@ async function main() {
 		load: async () => conversationState,
 		save: async (state) => {
 			conversationState = state;
+			saveSession(state);
 		},
 	};
 
@@ -386,10 +417,86 @@ async function main() {
 			input.placeholder = "e.g., refactor auth.ts to use JWT tokens";
 		}
 		conversationState = null;
+		commandHistory = [];
+		historyIndex = -1;
+		titleGenerated = false;
 		while (log.firstChild) {
 			log.removeChild(log.firstChild);
 		}
 		appendEntry("✔ Started a new session.", "outro");
+	}
+
+	function sessionPickerCommandDefs(): CommandDef[] {
+		return sessionPickerSessions.map((s) => ({
+			name: s.title || "(untitled)",
+			description: relativeDate(s.updatedAt),
+		}));
+	}
+
+	function renderSessionPicker() {
+		renderCommandPalette(
+			commandPalette,
+			sessionPickerCommandDefs(),
+			sessionPickerSelectedIndex,
+		);
+	}
+
+	function closeSessionPicker() {
+		sessionPickerOpen = false;
+		sessionPickerSessions = [];
+		sessionPickerSelectedIndex = 0;
+		renderCommandPalette(commandPalette, [], 0);
+		input.placeholder = "e.g., refactor auth.ts to use JWT tokens";
+	}
+
+	function openSessionPicker() {
+		appendEntry("/resume", "you");
+		const sessions = listSessions();
+		if (sessions.length === 0) {
+			appendEntry("✘ No previous sessions found for this project.", "outro");
+			return;
+		}
+		sessionPickerSessions = sessions;
+		sessionPickerSelectedIndex = 0;
+		sessionPickerOpen = true;
+		renderSessionPicker();
+		input.placeholder = "↑/↓ select, ↵ resume, esc cancel";
+	}
+
+	function resumeSession(chosen: {
+		id: string;
+		title: string | null;
+		updatedAt: string;
+	}) {
+		const restored = loadSession(chosen.id);
+		if (!restored) {
+			appendEntry("✘ Could not load that session.", "outro");
+			return;
+		}
+		if (pendingApproval) {
+			pendingApproval.resolve(false);
+			pendingApproval = null;
+			input.placeholder = "e.g., refactor auth.ts to use JWT tokens";
+		}
+		conversationState = restored;
+		titleGenerated = true;
+
+		while (log.firstChild) {
+			log.removeChild(log.firstChild);
+		}
+
+		commandHistory = [];
+		historyIndex = -1;
+		for (const item of extractReplayItems(restored.messages)) {
+			if (item.role === "user") {
+				appendEntry(item.text, "you");
+				commandHistory.push(item.text);
+			} else {
+				appendEntry(item.text, "message");
+			}
+		}
+
+		appendEntry(`✔ Resumed session: ${chosen.title || "(untitled)"}`, "outro");
 	}
 
 	function askYesNo(questionText: string): Promise<boolean> {
@@ -583,6 +690,8 @@ async function main() {
 
 	async function handlePrompt(userPrompt: string) {
 		appendEntry(userPrompt, "you");
+		commandHistory.push(userPrompt);
+		historyIndex = -1;
 
 		const controller = new AbortController();
 		const result = testStreamingLLM(
@@ -592,13 +701,25 @@ async function main() {
 			controller.signal,
 		);
 		const firstText = await consumeAssistantStream(result, controller);
-		await resolvePendingApprovals(
+		const finalText = await resolvePendingApprovals(
 			result,
 			TOOLS,
 			sessionState,
 			controller,
 			firstText,
 		);
+
+		if (!titleGenerated && conversationState) {
+			titleGenerated = true;
+			const sessionId = conversationState.id;
+			generateSessionTitle(userPrompt, finalText)
+				.then((title) => {
+					if (title) {
+						setSessionTitle(sessionId, title);
+					}
+				})
+				.catch(() => {});
+		}
 
 		// appendEntry("✔ Done! Your code has been updated successfully.", "outro");
 	}
@@ -697,6 +818,33 @@ async function main() {
 				}
 				return;
 			}
+			if (sessionPickerOpen) {
+				if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+					ev.preventDefault();
+					const len = sessionPickerSessions.length;
+					sessionPickerSelectedIndex =
+						ev.key === "ArrowDown"
+							? (sessionPickerSelectedIndex + 1) % len
+							: (sessionPickerSelectedIndex - 1 + len) % len;
+					renderSessionPicker();
+					return;
+				}
+				if (ev.key === "Enter") {
+					ev.preventDefault();
+					const chosen = sessionPickerSessions[sessionPickerSelectedIndex];
+					closeSessionPicker();
+					if (chosen) {
+						resumeSession(chosen);
+					}
+					return;
+				}
+				if (ev.key === "Escape") {
+					ev.preventDefault();
+					closeSessionPicker();
+					return;
+				}
+				return;
+			}
 			if (ev.key === "Tab" && paletteCommands.length > 0) {
 				ev.preventDefault();
 				const selected = paletteCommands[paletteSelectedIndex];
@@ -725,6 +873,21 @@ async function main() {
 					(paletteSelectedIndex - 1 + paletteCommands.length) %
 					paletteCommands.length;
 				renderPalette();
+			} else if (
+				(ev.key === "ArrowUp" || ev.key === "ArrowDown") &&
+				paletteCommands.length === 0
+			) {
+				const result = resolveHistoryNav(ev.key, input.value, {
+					history: commandHistory,
+					index: historyIndex,
+				});
+				if (result.handled) {
+					ev.preventDefault();
+					historyIndex = result.index;
+					input.value = result.value;
+					input.setSelectionRange(input.value.length, input.value.length);
+					syncInput();
+				}
 			} else if (ev.key === "Enter") {
 				ev.preventDefault();
 				if (paletteCommands.length > 0) {
@@ -756,6 +919,10 @@ async function main() {
 				}
 				if (matchesAny(value, INIT_COMMANDS)) {
 					runInitFlow();
+					return;
+				}
+				if (matchesAny(value, SESSION_COMMANDS)) {
+					openSessionPicker();
 					return;
 				}
 				handlePrompt(value);

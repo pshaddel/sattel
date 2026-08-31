@@ -1,5 +1,6 @@
 import { migration as createMentionedFiles } from "./001-create-mentioned-files";
 import { migration as addProjectToMentionedFiles } from "./002-add-project-to-mentioned-files";
+import { migration as createSessions } from "./003-create-sessions";
 
 export interface Migration {
 	id: number;
@@ -12,4 +13,5 @@ export interface Migration {
 export const MIGRATIONS: Migration[] = [
 	createMentionedFiles,
 	addProjectToMentionedFiles,
+	createSessions,
 ];

@@ -2,6 +2,7 @@ import {
 	EXIT_COMMANDS,
 	INIT_COMMANDS,
 	RESET_COMMANDS,
+	SESSION_COMMANDS,
 } from "./command-highlighter";
 
 export type MatchRange = readonly [number, number];
@@ -19,12 +20,14 @@ const DESCRIPTIONS: Record<string, string> = {
 	"/new": "Start a new session",
 	"/reset": "Start a new session",
 	"/init": "Explore the project and generate CLAUDE.md",
+	"/resume": "Resume a previous session",
 };
 
 const COMMANDS: CommandDef[] = [
 	...EXIT_COMMANDS,
 	...RESET_COMMANDS,
 	...INIT_COMMANDS,
+	...SESSION_COMMANDS,
 ].map((name) => ({ name, description: DESCRIPTIONS[name] ?? "" }));
 
 export const MAX_VISIBLE_COMMANDS = 5;
